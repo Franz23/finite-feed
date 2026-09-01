@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { reconcileActorRun } from "./_lib/apify.js";
 import { apiError, methodNotAllowed } from "./_lib/http.js";
 import { adminClient, requireUser } from "./_lib/supabase.js";
 import type { Bootstrap, FeedPost, HistoryItem, Profile, RefreshStatus } from "../src/types.js";
@@ -119,13 +120,31 @@ export default async function handler(request: VercelRequest, response: VercelRe
       }];
     });
 
-    const { data: latestRefresh } = await db
+    let { data: latestRefresh } = await db
       .from("refresh_runs")
-      .select("status, started_at, finished_at, error")
+      .select("status, started_at, finished_at, error, actor_run_id")
       .or(`user_id.eq.${user.id},user_id.is.null`)
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (
+      latestRefresh?.actor_run_id &&
+      (latestRefresh.status === "starting" || latestRefresh.status === "running")
+    ) {
+      try {
+        const status = await reconcileActorRun(latestRefresh.actor_run_id);
+        if (status !== "running") {
+          const { data: reconciled } = await db
+            .from("refresh_runs")
+            .select("status, started_at, finished_at, error, actor_run_id")
+            .eq("actor_run_id", latestRefresh.actor_run_id)
+            .maybeSingle();
+          if (reconciled) latestRefresh = reconciled;
+        }
+      } catch (error) {
+        console.error("Apify reconciliation failed:", error instanceof Error ? error.message : "Unknown error");
+      }
+    }
     let refresh: RefreshStatus = latestRefresh ? {
       status: latestRefresh.status,
       startedAt: latestRefresh.started_at,

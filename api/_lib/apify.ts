@@ -229,6 +229,59 @@ export async function ingestDataset(datasetId: string): Promise<number> {
   return normalized.length;
 }
 
+export async function finalizeActorRun(actorRunId: string, datasetId: string): Promise<number> {
+  const count = await ingestDataset(datasetId);
+  const db = adminClient();
+  const now = new Date().toISOString();
+  const { data: refreshRun, error: refreshError } = await db
+    .from("refresh_runs")
+    .select("target_urls")
+    .eq("actor_run_id", actorRunId)
+    .maybeSingle();
+  if (refreshError) throw refreshError;
+  const targetUrls = Array.isArray(refreshRun?.target_urls)
+    ? refreshRun.target_urls.filter((url): url is string => typeof url === "string")
+    : [];
+  if (targetUrls.length > 0) {
+    const { error: profileError } = await db
+      .from("profiles")
+      .update({ last_scraped_at: now, updated_at: now })
+      .in("linkedin_url", targetUrls);
+    if (profileError) throw profileError;
+  }
+  const { error } = await db.from("refresh_runs").update({
+    status: "succeeded", finished_at: now, posts_received: count, error: null,
+  }).eq("actor_run_id", actorRunId);
+  if (error) throw error;
+  return count;
+}
+
+export async function reconcileActorRun(actorRunId: string): Promise<"running" | "succeeded" | "failed"> {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) throw new Error("Apify is not configured.");
+  const response = await fetch(`https://api.apify.com/v2/actor-runs/${actorRunId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload: unknown = await response.json();
+  const data = isRecord(payload) ? nested(payload, "data") : undefined;
+  if (!response.ok || !data) throw new Error(`Could not check Apify run (${response.status}).`);
+  const status = stringValue(data, "status");
+  if (status === "SUCCEEDED") {
+    const datasetId = stringValue(data, "defaultDatasetId");
+    if (!datasetId) throw new Error("Apify completed without a dataset.");
+    await finalizeActorRun(actorRunId, datasetId);
+    return "succeeded";
+  }
+  if (["FAILED", "TIMED-OUT", "ABORTED"].includes(status ?? "")) {
+    const db = adminClient();
+    await db.from("refresh_runs").update({
+      status: "failed", finished_at: new Date().toISOString(), error: `Apify run ended with ${status}.`,
+    }).eq("actor_run_id", actorRunId);
+    return "failed";
+  }
+  return "running";
+}
+
 export function verifyWebhookSecret(provided: string): boolean {
   const expected = process.env.APIFY_WEBHOOK_SECRET ?? "";
   const providedHash = createHash("sha256").update(provided).digest();
