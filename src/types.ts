@@ -52,6 +52,8 @@ export type RefreshStatus = {
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
+  profileCount: number;
+  postsReceived: number;
 };
 
 export type Bootstrap = {

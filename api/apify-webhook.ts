@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { finalizeActorRun, verifyWebhookSecret, webhookDetails } from "./_lib/apify.js";
-import { apiError, methodNotAllowed } from "./_lib/http.js";
+import { apiError, errorMessage, methodNotAllowed } from "./_lib/http.js";
 import { adminClient } from "./_lib/supabase.js";
 
 export const config = { maxDuration: 60 };
@@ -23,7 +23,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const count = await finalizeActorRun(details.actorRunId, details.datasetId);
     return response.status(202).json({ accepted: true, posts: count });
   } catch (error) {
-    console.error("Apify webhook failed:", error instanceof Error ? error.message : "Unknown error");
+    console.error("Apify webhook failed:", errorMessage(error));
     return apiError(response, error);
   }
 }

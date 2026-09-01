@@ -75,6 +75,16 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .notice { position: relative; display: flex; justify-content: space-between; align-items: start; gap: 1rem; margin-top: 1rem; padding: 0.85rem 1rem; border-left: 3px solid var(--accent); background: #e6edf9; font-size: 0.84rem; line-height: 1.45; }
 .notice.error { border-left-color: var(--danger); background: #f7e8e4; color: #6d281e; }
 .notice button { border: 0; padding: 0; background: transparent; color: currentColor; font-size: 1.25rem; line-height: 1; cursor: pointer; }
+.refresh-progress { margin: 1rem 0 0; padding: 1.1rem 1.15rem; border: 1px solid #c9d6f3; border-radius: 8px; background: var(--accent-soft); }
+.refresh-progress.compact { padding: 0.9rem 1rem; }
+.refresh-progress-copy { display: flex; justify-content: space-between; align-items: end; gap: 1.5rem; }
+.refresh-progress-copy > div { display: grid; gap: 0.2rem; }
+.refresh-label { color: var(--accent); font-size: 0.61rem; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; }
+.refresh-progress-copy strong { font-size: 0.82rem; }
+.refresh-timing { flex: 0 0 auto; color: var(--muted); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+.progress-track { position: relative; height: 3px; overflow: hidden; margin-top: 0.8rem; background: rgb(36 87 245 / 15%); }
+.progress-track span { position: absolute; inset: 0 auto 0 0; width: 42%; background: var(--accent); animation: refresh-scan 1.4s ease-in-out infinite; }
+.refresh-progress p { margin: 0.7rem 0 0; color: #53647d; font-size: 0.7rem; line-height: 1.5; }
 .feed { width: min(100%, 600px); margin-inline: auto; }
 .feed-toolbar { display: flex; justify-content: space-between; align-items: center; min-height: 3.2rem; padding: 0.65rem 0.2rem; color: var(--muted); font-size: 0.68rem; }
 .feed-toolbar > span { text-transform: uppercase; letter-spacing: 0.075em; }
@@ -290,6 +300,7 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 
 @keyframes settle { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes breathe { from { opacity: 0.52; } to { opacity: 0.92; } }
+@keyframes refresh-scan { from { transform: translateX(-105%); } to { transform: translateX(340%); } }
 
 @media (max-width: 620px) {
   .topbar { grid-template-columns: 1fr auto; min-height: 62px; }
@@ -299,6 +310,7 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
   main { width: min(100% - 1rem, 680px); padding-top: 2rem; padding-bottom: 7rem; }
   .page-intro { gap: 1rem; }
   .edition-note span { display: none; }
+  .refresh-progress-copy { align-items: start; flex-direction: column; gap: 0.45rem; }
   .avatar { width: 2.65rem; height: 2.65rem; font-size: 0.7rem; }
   .card-header { padding-inline: 0.85rem; }
   .post-copy { padding-inline: 0.85rem; }
