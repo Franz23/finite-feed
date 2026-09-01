@@ -3,6 +3,28 @@ import { apiError, methodNotAllowed } from "./_lib/http";
 import { adminClient, requireUser } from "./_lib/supabase";
 import type { Bootstrap, FeedPost, HistoryItem, Profile, RefreshStatus } from "../src/types";
 
+type ProfileRow = {
+  id: string;
+  name: string | null;
+  linkedin_url: string;
+  headline: string | null;
+  avatar_url: string | null;
+  last_scraped_at: string | null;
+};
+
+type PostRow = {
+  id: string;
+  profile_id: string;
+  linkedin_url: string;
+  content: string | null;
+  post_kind: FeedPost["kind"];
+  published_at: string;
+  likes: number;
+  comments: number;
+  reposts: number;
+  media: FeedPost["media"];
+};
+
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   if (request.method !== "GET") return methodNotAllowed(response, ["GET"]);
   try {
@@ -14,7 +36,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
       .eq("user_id", user.id);
     if (followsError) throw followsError;
 
-    const profileRows = (follows ?? []).flatMap((follow) => follow.profiles ?? []);
+    const followRows = (follows ?? []) as Array<{ profile_id: string; profiles: ProfileRow[] }>;
+    const profileRows = followRows.flatMap((follow) => follow.profiles ?? []);
     const profiles: Profile[] = profileRows.map((profile) => ({
       id: profile.id,
       name: profile.name,
@@ -38,14 +61,16 @@ export default async function handler(request: VercelRequest, response: VercelRe
       .order("published_at", { ascending: false })
       .limit(250);
     if (postsError) throw postsError;
-    const postIds = (posts ?? []).map((post) => post.id);
+    const postRows = (posts ?? []) as PostRow[];
+    const postIds = postRows.map((post) => post.id);
     const { data: reads, error: readsError } = postIds.length
       ? await db.from("post_reads").select("post_id, seen_at").eq("user_id", user.id).in("post_id", postIds)
       : { data: [], error: null };
     if (readsError) throw readsError;
-    const readById = new Map((reads ?? []).map((read) => [read.post_id, read.seen_at]));
+    const readRows = (reads ?? []) as Array<{ post_id: string; seen_at: string }>;
+    const readById = new Map(readRows.map((read) => [read.post_id, read.seen_at]));
 
-    const feed: FeedPost[] = (posts ?? []).filter((post) => !readById.has(post.id)).flatMap((post) => {
+    const feed: FeedPost[] = postRows.filter((post) => !readById.has(post.id)).flatMap((post) => {
       const profile = profileById.get(post.profile_id);
       if (!profile) return [];
       return [{
@@ -66,7 +91,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       }];
     });
 
-    const history: HistoryItem[] = (posts ?? []).filter((post) => readById.has(post.id)).slice(0, 100).flatMap((post) => {
+    const history: HistoryItem[] = postRows.filter((post) => readById.has(post.id)).slice(0, 100).flatMap((post) => {
       const profile = profileById.get(post.profile_id);
       const seenAt = readById.get(post.id);
       if (!profile || !seenAt) return [];

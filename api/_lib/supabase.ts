@@ -1,5 +1,14 @@
-import { createClient, type User } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import type { VercelRequest } from "@vercel/node";
+
+export type AuthenticatedUser = { id: string };
+
+type AuthClient = {
+  getUser(token: string): Promise<{
+    data: { user: AuthenticatedUser | null };
+    error: unknown;
+  }>;
+};
 
 function required(name: string): string {
   const value = process.env[name];
@@ -13,14 +22,14 @@ export function adminClient() {
   });
 }
 
-export async function requireUser(request: VercelRequest): Promise<User> {
+export async function requireUser(request: VercelRequest): Promise<AuthenticatedUser> {
   const authorization = request.headers.authorization ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   if (!token) throw new Error("Unauthorized");
   const client = createClient(required("SUPABASE_URL"), required("SUPABASE_PUBLISHABLE_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await client.auth.getUser(token);
+  const { data, error } = await (client.auth as unknown as AuthClient).getUser(token);
   if (error || !data.user) throw new Error("Unauthorized");
   return data.user;
 }

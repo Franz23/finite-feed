@@ -33,7 +33,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (profileError) throw profileError;
     const { data: profiles, error: selectError } = await db.from("profiles").select("id").in("linkedin_url", urls);
     if (selectError) throw selectError;
-    const follows = (profiles ?? []).map((profile) => ({ user_id: user.id, profile_id: profile.id }));
+    const profileRows = (profiles ?? []) as Array<{ id: string }>;
+    const follows = profileRows.map((profile) => ({ user_id: user.id, profile_id: profile.id }));
     const { error: followError } = await db.from("user_follows").upsert(follows, { onConflict: "user_id,profile_id" });
     if (followError) throw followError;
     const { count, error: countError } = await db

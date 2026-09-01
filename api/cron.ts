@@ -8,7 +8,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
   const db = adminClient();
   const { data: profiles, error } = await db.from("profiles").select("linkedin_url").order("linkedin_url").limit(5000);
   if (error) return response.status(500).json({ error: error.message });
-  const urls = [...new Set((profiles ?? []).map((profile) => profile.linkedin_url))];
+  const profileRows = (profiles ?? []) as Array<{ linkedin_url: string }>;
+  const urls = [...new Set(profileRows.map((profile) => profile.linkedin_url))];
   if (urls.length === 0) return response.status(200).json({ status: "empty" });
   try {
     await startActorRun(request, urls, null, 3);

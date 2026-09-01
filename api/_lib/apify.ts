@@ -188,7 +188,8 @@ export async function ingestDataset(datasetId: string): Promise<number> {
   const db = adminClient();
   const { data: profileRows, error: profileError } = await db.from("profiles").select("id, linkedin_url").limit(5000);
   if (profileError) throw profileError;
-  const profiles = new Map((profileRows ?? []).map((profile) => [profile.linkedin_url, { id: profile.id, url: profile.linkedin_url }]));
+  const typedProfiles = (profileRows ?? []) as Array<{ id: string; linkedin_url: string }>;
+  const profiles = new Map<string, { id: string; url: string }>(typedProfiles.map((profile) => [profile.linkedin_url, { id: profile.id, url: profile.linkedin_url }]));
   const datasetUrl = new URL(`https://api.apify.com/v2/datasets/${datasetId}/items`);
   datasetUrl.searchParams.set("clean", "true");
   datasetUrl.searchParams.set("format", "json");

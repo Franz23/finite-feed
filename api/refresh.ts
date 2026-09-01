@@ -16,7 +16,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
       .select("profiles(linkedin_url, last_scraped_at)")
       .eq("user_id", user.id);
     if (error) throw error;
-    const profiles = (follows ?? []).flatMap((follow) => follow.profiles ?? []);
+    const followRows = (follows ?? []) as Array<{
+      profiles: Array<{ linkedin_url: string; last_scraped_at: string | null }>;
+    }>;
+    const profiles = followRows.flatMap((follow) => follow.profiles ?? []);
     if (profiles.length < 3) throw new Error("Follow at least three people before refreshing.");
     const days = profiles.some((profile) => !profile.last_scraped_at) ? 7 : 3;
     await startActorRun(request, profiles.map((profile) => profile.linkedin_url), user.id, days);
