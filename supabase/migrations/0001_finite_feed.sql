@@ -1,3 +1,4 @@
+-- Finite Feed database schema
 create extension if not exists pgcrypto;
 
 create table public.profiles (

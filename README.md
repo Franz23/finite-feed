@@ -1,8 +1,8 @@
-# Focused Feed
+# Finite Feed
 
 A calm, private LinkedIn reader for the people you actually care about.
 
-Focused Feed collects public original posts and reposts without asking for a LinkedIn login. It renders images, videos, documents, and aggregate engagement; lets readers sort by recency or engagement; and remembers posts once they have been scrolled past.
+Finite Feed collects public original posts and reposts without asking for a LinkedIn login. It renders images, videos, documents, and aggregate engagement; lets readers sort by recency or engagement; and remembers posts once they have been scrolled past.
 
 ## Product behavior
 
@@ -31,7 +31,7 @@ corepack pnpm install
 cp .env.example .env.local
 ```
 
-Create a Supabase project, apply [`supabase/migrations/0001_focused_feed.sql`](supabase/migrations/0001_focused_feed.sql), and fill in `.env.local`. Never commit that file.
+Create a Supabase project, apply [`supabase/migrations/0001_finite_feed.sql`](supabase/migrations/0001_finite_feed.sql), and fill in `.env.local`. Never commit that file.
 
 In Supabase Authentication, set the Site URL and allowed redirect URLs to your local and production origins. Email-link authentication works with the email provider. To show **Continue with Google**, enable the Google provider and set `VITE_GOOGLE_AUTH_ENABLED=true`. Configure custom SMTP before inviting production users because Supabase's built-in sender is intended for testing.
 
