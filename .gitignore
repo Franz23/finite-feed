@@ -7,4 +7,6 @@ dist
 !.env.example
 people.csv
 .vercel
+.agents
+skills-lock.json
 .DS_Store
