@@ -191,6 +191,13 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .auth-submit { border: 1px solid var(--accent); border-radius: 999px; padding: 0.85rem 1rem; background: var(--accent); color: white; font-size: 0.82rem; font-weight: 800; cursor: pointer; }
 .auth-submit:hover { background: var(--accent-dark); }
 .auth-submit:disabled { opacity: 0.55; cursor: wait; }
+.social-button { display: flex; align-items: center; justify-content: center; gap: 0.65rem; border: 1px solid #b6b6b6; border-radius: 999px; padding: 0.78rem 1rem; background: white; color: var(--ink); font-size: 0.82rem; font-weight: 750; cursor: pointer; }
+.social-button:hover { border-color: #777; background: #fafafa; }
+.social-button:disabled { opacity: 0.55; cursor: wait; }
+.google-mark { width: 1.1rem; height: 1.1rem; }
+.auth-divider { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 0.75rem; color: var(--muted); font-size: 0.68rem; text-transform: uppercase; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; background: var(--hairline); }
+.passwordless-note { margin: -0.35rem 0 0; color: var(--muted); font-size: 0.68rem; text-align: center; }
 
 .onboarding-page { width: min(100% - 2rem, 760px); min-height: 100dvh; margin: 0 auto; padding: clamp(2rem, 6vw, 5rem) 0; }
 .onboarding-card { margin-top: clamp(3rem, 10vw, 7rem); padding: clamp(1.5rem, 5vw, 3.5rem); border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); }

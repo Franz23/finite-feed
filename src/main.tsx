@@ -9,6 +9,7 @@ import "./styles.css";
 
 type View = "today" | "people" | "history";
 type SortMode = "recent" | "engaged";
+const pendingUrlsKey = "focused-feed:pending-linkedin-urls";
 
 const numberFormatter = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
@@ -42,6 +43,23 @@ function Icon({ name }: { name: "heart" | "comment" | "repost" | "arrow" | "refr
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return <span className={`brand ${compact ? "compact" : ""}`}><img src="/focused-feed-mark.svg" alt="" /><span>Focused Feed</span></span>;
+}
+
+function GoogleMark() {
+  return <svg className="google-mark" aria-hidden="true" viewBox="0 0 24 24"><path fill="#4285f4" d="M21.6 12.2c0-.7-.1-1.5-.2-2.2H12v4.3h5.4a4.7 4.7 0 0 1-2 3v2.8h3.5c2-1.9 3.2-4.6 3.2-7.9Z" /><path fill="#34a853" d="M12 22c2.9 0 5.3-1 7-2.6l-3.5-2.8c-1 .7-2.2 1-3.5 1-2.7 0-5-1.8-5.9-4.3H2.5v2.8A10 10 0 0 0 12 22Z" /><path fill="#fbbc05" d="M6.1 13.3A6 6 0 0 1 6 12c0-.5 0-.9.1-1.3V7.9H2.5A10 10 0 0 0 2 12c0 1.5.3 2.8.8 4.1l3.3-2.8Z" /><path fill="#ea4335" d="M12 6.4c1.6 0 3 .5 4.1 1.6l3.1-3A10 10 0 0 0 2.5 8l3.6 2.8A6 6 0 0 1 12 6.4Z" /></svg>;
+}
+
+function savePendingUrls(urls: string[]) {
+  window.localStorage.setItem(pendingUrlsKey, JSON.stringify(urls));
+}
+
+function pendingUrls(): string[] {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(pendingUrlsKey) ?? "[]");
+    return Array.isArray(value) ? value.filter((url): url is string => typeof url === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 function Skeleton() {
@@ -102,41 +120,64 @@ function UrlEntry({ minimum = 1, initialValue = "", submitLabel = "Add people", 
 function AuthScreen() {
   const [mode, setMode] = useState<"signup" | "login">("signup");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [urls, setUrls] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  function signupUrls(): string[] | null {
     setError(null);
     setMessage(null);
     const parsed = parseLinkedInUrls(urls);
-    if (mode === "signup" && parsed.invalid.length > 0) return setError(`Check this entry: ${parsed.invalid[0]}`);
-    if (mode === "signup" && parsed.urls.length < 3) return setError("Start with at least three LinkedIn profile URLs.");
+    if (mode !== "signup") return [];
+    if (parsed.invalid.length > 0) { setError(`Check this entry: ${parsed.invalid[0]}`); return null; }
+    if (parsed.urls.length < 3) { setError("Start with at least three LinkedIn profile URLs."); return null; }
+    savePendingUrls(parsed.urls);
+    return parsed.urls;
+  }
+  async function submitEmail(event: React.FormEvent) {
+    event.preventDefault();
+    const parsed = signupUrls();
+    if (!parsed) return;
     setBusy(true);
     try {
-      if (mode === "login") {
-        const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
-        if (loginError) throw loginError;
-      } else {
-        const { data, error: signupError } = await supabase.auth.signUp({ email, password, options: { data: { linkedin_urls: parsed.urls } } });
-        if (signupError) throw signupError;
-        if (data.session) {
-          await addFollows(parsed.urls);
-          await startRefresh();
-        } else setMessage("Check your email to confirm your account. Your three people are saved for onboarding.");
-      }
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: window.location.origin,
+          shouldCreateUser: mode === "signup",
+          ...(mode === "signup" ? { data: { linkedin_urls: parsed } } : {}),
+        },
+      });
+      if (otpError) throw otpError;
+      setMessage("Check your email for your secure sign-in link. You can close this tab after it arrives.");
     } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Could not continue."); } finally { setBusy(false); }
   }
-  return <main className="auth-page"><section className="auth-story"><Brand /><span className="auth-kicker">Signal over noise</span><h1>The people you care about.<br />Nothing else.</h1><p>A calm, private LinkedIn reader that remembers what you’ve seen and lets the rest disappear.</p><div className="focus-demo"><span /><span className="active" /><span /></div></section><section className="auth-card"><div className="auth-tabs" role="tablist"><button className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submit(event)}><label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" /></label><label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={8} autoComplete={mode === "signup" ? "new-password" : "current-password"} /></label>{mode === "signup" && <label>Who do you want to follow?<textarea value={urls} onChange={(event) => setUrls(event.target.value)} rows={5} required placeholder="Paste at least 3 LinkedIn URLs, separated by commas" spellCheck={false} /><small>Start with three. You can add more anytime.</small></label>}<button className="auth-submit" disabled={busy} type="submit">{busy ? "Working…" : mode === "signup" ? "Create my focused feed" : "Sign in"}</button>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></section></main>;
+  async function continueWithGoogle() {
+    const parsed = signupUrls();
+    if (!parsed) return;
+    setBusy(true);
+    try {
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin },
+      });
+      if (oauthError) throw oauthError;
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Could not continue with Google.");
+      setBusy(false);
+    }
+  }
+  return <main className="auth-page"><section className="auth-story"><Brand /><span className="auth-kicker">Signal over noise</span><h1>The people you care about.<br />Nothing else.</h1><p>A calm, private LinkedIn reader that remembers what you’ve seen and lets the rest disappear.</p><div className="focus-demo"><span /><span className="active" /><span /></div></section><section className="auth-card"><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{mode === "signup" && <label>Who do you want to follow?<textarea value={urls} onChange={(event) => setUrls(event.target.value)} rows={5} required placeholder="Paste at least 3 LinkedIn URLs, separated by commas" spellCheck={false} /><small>Start with three. You can add more anytime.</small></label>}<button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div><label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : "Email me a sign-in link"}</button><p className="passwordless-note">No password. The link signs you in securely.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></section></main>;
 }
 
 function Onboarding({ session }: { session: Session }) {
-  const saved = Array.isArray(session.user.user_metadata.linkedin_urls) ? session.user.user_metadata.linkedin_urls.join(", ") : "";
+  const metadataUrls = Array.isArray(session.user.user_metadata.linkedin_urls)
+    ? session.user.user_metadata.linkedin_urls.filter((url): url is string => typeof url === "string")
+    : [];
+  const saved = (metadataUrls.length > 0 ? metadataUrls : pendingUrls()).join(", ");
   const [complete, setComplete] = useState(false);
   if (complete) return <div className="centered-state"><Brand /><h1>Building your feed…</h1><p>Your first week of posts is being collected. Reloading shortly.</p></div>;
-  return <main className="onboarding-page"><Brand /><section className="onboarding-card"><span className="step-label">One quick step</span><h1>Choose your signal.</h1><p>Add at least three public LinkedIn profiles. We’ll collect their original posts and reposts—no LinkedIn login required.</p><UrlEntry minimum={3} initialValue={saved} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); window.setTimeout(() => window.location.reload(), 4_000); }} /></section></main>;
+  return <main className="onboarding-page"><Brand /><section className="onboarding-card"><span className="step-label">One quick step</span><h1>Choose your signal.</h1><p>Add at least three public LinkedIn profiles. We’ll collect their original posts and reposts—no LinkedIn login required.</p><UrlEntry minimum={3} initialValue={saved} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); window.localStorage.removeItem(pendingUrlsKey); setComplete(true); window.setTimeout(() => window.location.reload(), 4_000); }} /></section></main>;
 }
 
 function FeedApp() {
@@ -166,7 +207,7 @@ function FeedApp() {
 
 function AuthenticatedApp({ session }: { session: Session }) {
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
-  useEffect(() => { void getBootstrap().then((data) => setNeedsOnboarding(data.profiles.length < 3)).catch(() => setNeedsOnboarding(true)); }, []);
+  useEffect(() => { void getBootstrap().then((data) => { const needsSetup = data.profiles.length < 3; if (!needsSetup) window.localStorage.removeItem(pendingUrlsKey); setNeedsOnboarding(needsSetup); }).catch(() => setNeedsOnboarding(true)); }, []);
   if (needsOnboarding === null) return <div className="centered-state"><Brand /><p>Loading your feed…</p></div>;
   return needsOnboarding ? <Onboarding session={session} /> : <FeedApp />;
 }

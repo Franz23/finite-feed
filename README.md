@@ -6,7 +6,7 @@ Focused Feed collects public original posts and reposts without asking for a Lin
 
 ## Product behavior
 
-- Email and password authentication through Supabase Auth
+- Passwordless email-link and Google authentication through Supabase Auth
 - At least three LinkedIn profile URLs during onboarding
 - Add more profiles later by pasting comma- or newline-separated URLs
 - Sort by **Most recent** or **Most engaged**
@@ -32,6 +32,8 @@ cp .env.example .env.local
 ```
 
 Create a Supabase project, apply [`supabase/migrations/0001_focused_feed.sql`](supabase/migrations/0001_focused_feed.sql), and fill in `.env.local`. Never commit that file.
+
+In Supabase Authentication, set the Site URL and allowed redirect URLs to your local and production origins. Enable Google if you want the **Continue with Google** option; email-link authentication works with the email provider. Configure custom SMTP before inviting production users because Supabase's built-in sender is intended for testing.
 
 Run the frontend:
 
