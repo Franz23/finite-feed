@@ -55,6 +55,48 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(200).json(payload);
     }
 
+    let { data: latestRefresh } = await db
+      .from("refresh_runs")
+      .select("status, started_at, finished_at, error, actor_run_id")
+      .or(`user_id.eq.${user.id},user_id.is.null`)
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (
+      latestRefresh?.actor_run_id &&
+      (latestRefresh.status === "starting" || latestRefresh.status === "running")
+    ) {
+      try {
+        const status = await reconcileActorRun(latestRefresh.actor_run_id);
+        if (status !== "running") {
+          const { data: reconciled } = await db
+            .from("refresh_runs")
+            .select("status, started_at, finished_at, error, actor_run_id")
+            .eq("actor_run_id", latestRefresh.actor_run_id)
+            .maybeSingle();
+          if (reconciled) latestRefresh = reconciled;
+        }
+      } catch (error) {
+        console.error("Apify reconciliation failed:", error instanceof Error ? error.message : "Unknown error");
+      }
+    }
+    let refresh: RefreshStatus = latestRefresh ? {
+      status: latestRefresh.status,
+      startedAt: latestRefresh.started_at,
+      finishedAt: latestRefresh.finished_at,
+      error: latestRefresh.error,
+    } : { status: "idle", startedAt: null, finishedAt: null, error: null };
+    if (
+      (refresh.status === "starting" || refresh.status === "running") &&
+      refresh.startedAt &&
+      Date.parse(refresh.startedAt) < Date.now() - 10 * 60_000
+    ) {
+      const finishedAt = new Date().toISOString();
+      const error = "The refresh took too long to finish. Try it again.";
+      await db.from("refresh_runs").update({ status: "failed", finished_at: finishedAt, error }).eq("started_at", refresh.startedAt);
+      refresh = { ...refresh, status: "failed", finishedAt, error };
+    }
+
     const { data: posts, error: postsError } = await db
       .from("posts")
       .select("id, profile_id, linkedin_url, content, post_kind, published_at, likes, comments, reposts, media")
@@ -119,48 +161,6 @@ export default async function handler(request: VercelRequest, response: VercelRe
         seenAt: read.seen_at,
       }];
     });
-
-    let { data: latestRefresh } = await db
-      .from("refresh_runs")
-      .select("status, started_at, finished_at, error, actor_run_id")
-      .or(`user_id.eq.${user.id},user_id.is.null`)
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (
-      latestRefresh?.actor_run_id &&
-      (latestRefresh.status === "starting" || latestRefresh.status === "running")
-    ) {
-      try {
-        const status = await reconcileActorRun(latestRefresh.actor_run_id);
-        if (status !== "running") {
-          const { data: reconciled } = await db
-            .from("refresh_runs")
-            .select("status, started_at, finished_at, error, actor_run_id")
-            .eq("actor_run_id", latestRefresh.actor_run_id)
-            .maybeSingle();
-          if (reconciled) latestRefresh = reconciled;
-        }
-      } catch (error) {
-        console.error("Apify reconciliation failed:", error instanceof Error ? error.message : "Unknown error");
-      }
-    }
-    let refresh: RefreshStatus = latestRefresh ? {
-      status: latestRefresh.status,
-      startedAt: latestRefresh.started_at,
-      finishedAt: latestRefresh.finished_at,
-      error: latestRefresh.error,
-    } : { status: "idle", startedAt: null, finishedAt: null, error: null };
-    if (
-      (refresh.status === "starting" || refresh.status === "running") &&
-      refresh.startedAt &&
-      Date.parse(refresh.startedAt) < Date.now() - 10 * 60_000
-    ) {
-      const finishedAt = new Date().toISOString();
-      const error = "The refresh took too long to finish. Try it again.";
-      await db.from("refresh_runs").update({ status: "failed", finished_at: finishedAt, error }).eq("started_at", refresh.startedAt);
-      refresh = { ...refresh, status: "failed", finishedAt, error };
-    }
 
     return response.status(200).json({ feed, profiles, history, refresh } satisfies Bootstrap);
   } catch (error) {
