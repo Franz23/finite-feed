@@ -199,8 +199,20 @@ export async function ingestDataset(datasetId: string): Promise<number> {
   const payload: unknown = await response.json();
   if (!Array.isArray(payload)) throw new Error("Apify returned an unexpected dataset shape.");
   const candidates = payload.map((item) => normalizeActorPost(item, profiles)).filter((post): post is ActorPost => post !== null);
-  const normalized = [...new Map(candidates.map((post) => [post.id, post])).values()];
-  if (normalized.length === 0) return 0;
+  const uniqueByUrl = [...new Map(candidates.map((post) => [post.linkedinUrl, post])).values()];
+  if (uniqueByUrl.length === 0) return 0;
+  const { data: existingPosts, error: existingError } = await db
+    .from("posts")
+    .select("id, linkedin_url")
+    .in("linkedin_url", uniqueByUrl.map((post) => post.linkedinUrl));
+  if (existingError) throw existingError;
+  const existingIdByUrl = new Map(
+    ((existingPosts ?? []) as Array<{ id: string; linkedin_url: string }>).map((post) => [post.linkedin_url, post.id]),
+  );
+  const normalized = uniqueByUrl.map((post) => ({
+    ...post,
+    id: existingIdByUrl.get(post.linkedinUrl) ?? post.id,
+  }));
   const now = new Date().toISOString();
   const { error: postsError } = await db.from("posts").upsert(normalized.map((post) => ({
     id: post.id, profile_id: post.profileId, linkedin_url: post.linkedinUrl, content: post.content,
