@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { startActorRun } from "./_lib/apify";
-import { apiError, methodNotAllowed } from "./_lib/http";
-import { adminClient, requireUser } from "./_lib/supabase";
+import { startActorRun } from "./_lib/apify.js";
+import { apiError, methodNotAllowed } from "./_lib/http.js";
+import { adminClient, requireUser } from "./_lib/supabase.js";
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);

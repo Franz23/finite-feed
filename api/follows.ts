@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { canonicalLinkedInProfileUrl } from "../src/linkedin";
-import { apiError, methodNotAllowed } from "./_lib/http";
-import { adminClient, requireUser } from "./_lib/supabase";
+import { canonicalLinkedInProfileUrl } from "../src/linkedin.js";
+import { apiError, methodNotAllowed } from "./_lib/http.js";
+import { adminClient, requireUser } from "./_lib/supabase.js";
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   if (!request.method || !["POST", "DELETE"].includes(request.method)) return methodNotAllowed(response, ["POST", "DELETE"]);

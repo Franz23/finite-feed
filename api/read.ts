@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { apiError, methodNotAllowed } from "./_lib/http";
-import { adminClient, requireUser } from "./_lib/supabase";
+import { apiError, methodNotAllowed } from "./_lib/http.js";
+import { adminClient, requireUser } from "./_lib/supabase.js";
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   if (request.method !== "POST") return methodNotAllowed(response, ["POST"]);

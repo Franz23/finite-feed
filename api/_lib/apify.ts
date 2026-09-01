@@ -1,8 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { VercelRequest } from "@vercel/node";
-import { canonicalLinkedInProfileUrl } from "../../src/linkedin";
-import type { PostImage, PostMedia } from "../../src/types";
-import { adminClient, publicAppUrl } from "./supabase";
+import { canonicalLinkedInProfileUrl } from "../../src/linkedin.js";
+import type { PostImage, PostMedia } from "../../src/types.js";
+import { adminClient, publicAppUrl } from "./supabase.js";
 
 type ActorPost = {
   id: string;

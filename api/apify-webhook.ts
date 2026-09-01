@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { ingestDataset, verifyWebhookSecret, webhookDetails } from "./_lib/apify";
-import { apiError, methodNotAllowed } from "./_lib/http";
-import { adminClient } from "./_lib/supabase";
+import { ingestDataset, verifyWebhookSecret, webhookDetails } from "./_lib/apify.js";
+import { apiError, methodNotAllowed } from "./_lib/http.js";
+import { adminClient } from "./_lib/supabase.js";
 
 export const config = { maxDuration: 60 };
 

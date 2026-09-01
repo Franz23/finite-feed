@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { apiError, methodNotAllowed } from "./_lib/http";
-import { adminClient, requireUser } from "./_lib/supabase";
-import type { Bootstrap, FeedPost, HistoryItem, Profile, RefreshStatus } from "../src/types";
+import { apiError, methodNotAllowed } from "./_lib/http.js";
+import { adminClient, requireUser } from "./_lib/supabase.js";
+import type { Bootstrap, FeedPost, HistoryItem, Profile, RefreshStatus } from "../src/types.js";
 
 type ProfileRow = {
   id: string;

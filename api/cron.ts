@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { startActorRun } from "./_lib/apify";
-import { adminClient } from "./_lib/supabase";
+import { startActorRun } from "./_lib/apify.js";
+import { adminClient } from "./_lib/supabase.js";
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
   const secret = process.env.CRON_SECRET;
