@@ -149,7 +149,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       published_at: string;
       profiles: { name: string | null } | Array<{ name: string | null }>;
     };
-    const history: HistoryItem[] = (historyReads ?? []).flatMap((read) => {
+    const history: HistoryItem[] = (historyReads ?? []).flatMap((read: { seen_at: string; posts: unknown }) => {
       const rawPost = read.posts as HistoryPostRow | HistoryPostRow[];
       const post = Array.isArray(rawPost) ? rawPost[0] : rawPost;
       if (!post) return [];

@@ -252,7 +252,7 @@ export async function finalizeActorRun(actorRunId: string, datasetId: string): P
     .maybeSingle();
   if (refreshError) throw refreshError;
   const targetUrls = Array.isArray(refreshRun?.target_urls)
-    ? refreshRun.target_urls.filter((url): url is string => typeof url === "string")
+    ? refreshRun.target_urls.filter((url: unknown): url is string => typeof url === "string")
     : [];
   if (targetUrls.length > 0) {
     const { error: profileError } = await db
