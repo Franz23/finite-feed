@@ -6,6 +6,7 @@ export type FeedPost = {
   profileHeadline: string | null;
   profileAvatarUrl: string | null;
   linkedinUrl: string;
+  platform: "linkedin" | "x";
   content: string;
   kind: "original" | "repost" | "quote";
   publishedAt: string;
@@ -36,6 +37,7 @@ export type Profile = {
   id: string;
   name: string | null;
   linkedinUrl: string;
+  platform: "linkedin" | "x";
   lastScrapedAt: string | null;
 };
 
@@ -43,6 +45,7 @@ export type HistoryItem = {
   id: string;
   profileName: string;
   linkedinUrl: string;
+  platform: "linkedin" | "x";
   publishedAt: string;
   seenAt: string;
 };

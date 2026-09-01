@@ -1,13 +1,13 @@
 # Finite Feed
 
-A calm, private LinkedIn reader for the people you actually care about.
+A calm, private LinkedIn and X reader for the people you actually care about.
 
-Finite Feed collects public original posts and reposts without asking for a LinkedIn login. It renders images, videos, documents, and aggregate engagement; lets readers sort by recency or engagement; and remembers posts once they have been scrolled past.
+Finite Feed collects public original posts and reposts without asking for a LinkedIn or X login. It renders available media and aggregate engagement, lets readers sort by recency or engagement, and remembers posts once they have been scrolled past.
 
 ## Product behavior
 
 - Passwordless email-link and Google authentication through Supabase Auth
-- At least three LinkedIn profile URLs during onboarding
+- At least three LinkedIn or X profile URLs during onboarding
 - Optional guidance for using a personal LinkedIn data export with Claude to produce a curated URL list; the archive is never uploaded to Finite Feed
 - Add more profiles later by pasting comma- or newline-separated URLs
 - Sort by **Most recent** or **Most engaged**
@@ -21,7 +21,7 @@ Finite Feed collects public original posts and reposts without asking for a Link
 - React + Vite
 - Vercel Functions
 - Supabase Auth + Postgres with Row Level Security
-- Apify using `harvestapi/linkedin-profile-posts`
+- Apify using `harvestapi/linkedin-profile-posts` and `nick.cheng/x-twitter-profile-tweets-scraper`
 
 ## Local setup
 

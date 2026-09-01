@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "r
 import { createRoot } from "react-dom/client";
 import type { Session } from "@supabase/supabase-js";
 import { addFollows, getBootstrap, markSeen, removeFollow, startRefresh } from "./api";
-import { parseLinkedInUrls } from "./linkedin";
+import { parseSocialUrls } from "./social";
 import { isSupabaseConfigured, supabase } from "./supabase";
 import type { Bootstrap, FeedPost, RefreshStatus } from "./types";
 import "./styles.css";
@@ -109,9 +109,10 @@ function RefreshProgress({ refresh, compact = false }: { refresh: RefreshStatus;
 
 function PostAttachment({ post }: { post: FeedPost }) {
   const media = post.media;
+  const platformName = post.platform === "x" ? "X" : "LinkedIn";
   if (!media) return null;
-  if (media.video) return <div className="post-media video-media"><video controls playsInline preload="metadata" poster={media.video.thumbnailUrl ?? undefined}><source src={media.video.url} type="video/mp4" />Your browser cannot play this video. <a href={post.linkedinUrl}>Open it on LinkedIn.</a></video></div>;
-  if (media.images.length > 0) return <a className={`post-media image-grid image-count-${Math.min(media.images.length, 4)}`} href={post.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`View ${post.profileName}'s post on LinkedIn`}>{media.images.map((image, index) => <img key={image.url} src={image.url} alt={media.images.length > 1 ? `Post image ${index + 1} of ${media.images.length}` : "Post image"} loading="lazy" decoding="async" />)}</a>;
+  if (media.video) return <div className="post-media video-media"><video controls playsInline preload="metadata" poster={media.video.thumbnailUrl ?? undefined}><source src={media.video.url} type="video/mp4" />Your browser cannot play this video. <a href={post.linkedinUrl}>Open it on {platformName}.</a></video></div>;
+  if (media.images.length > 0) return <a className={`post-media image-grid image-count-${Math.min(media.images.length, 4)}`} href={post.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`View ${post.profileName}'s post on ${platformName}`}>{media.images.map((image, index) => <img key={image.url} src={image.url} alt={media.images.length > 1 ? `Post image ${index + 1} of ${media.images.length}` : "Post image"} loading="lazy" decoding="async" />)}</a>;
   if (media.document) return <a className="post-media document-media" href={media.document.url ?? post.linkedinUrl} target="_blank" rel="noreferrer">{media.document.coverUrl && <img src={media.document.coverUrl} alt="Document cover" loading="lazy" decoding="async" />}<span className="document-meta"><strong>{media.document.title?.trim() || "LinkedIn document"}</strong><span>{media.document.pageCount ? `${media.document.pageCount} pages` : "Open document"}</span></span></a>;
   return null;
 }
@@ -123,6 +124,7 @@ function FeedCard({ post, onSeen }: { post: FeedPost; onSeen: (id: string) => vo
   const [seen, setSeen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const isLong = post.content.length > 680 || post.content.split("\n").length > 10;
+  const platformName = post.platform === "x" ? "X" : "LinkedIn";
   useEffect(() => {
     const element = cardRef.current;
     if (!element) return;
@@ -141,12 +143,12 @@ function FeedCard({ post, onSeen }: { post: FeedPost; onSeen: (id: string) => vo
   }, [onSeen, post.id]);
   return <article className="feed-card" ref={cardRef} data-seen={seen ? "true" : "false"} data-kind={post.kind}>
     <div className="card-body">
-      <header className="card-header"><div className="card-identity"><a className="avatar" href={post.profileUrl} target="_blank" rel="noreferrer" aria-label={`Open ${post.profileName}'s LinkedIn profile`}>{post.profileAvatarUrl ? <img src={post.profileAvatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(post.profileName)}</span>}</a><div className="identity-copy"><a className="person-name" href={post.profileUrl} target="_blank" rel="noreferrer">{post.profileName}</a>{post.profileHeadline && <span className="profile-headline">{post.profileHeadline}</span>}<span className="post-meta"><time dateTime={post.publishedAt}>{formatRelativeDate(post.publishedAt)}</time></span></div></div>{seen && <span className="seen-mark"><Icon name="check" /> Read</span>}</header>
+      <header className="card-header"><div className="card-identity"><a className="avatar" href={post.profileUrl} target="_blank" rel="noreferrer" aria-label={`Open ${post.profileName}'s ${platformName} profile`}>{post.profileAvatarUrl ? <img src={post.profileAvatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(post.profileName)}</span>}</a><div className="identity-copy"><span className="identity-line"><a className="person-name" href={post.profileUrl} target="_blank" rel="noreferrer">{post.profileName}</a><span className={`platform-mark ${post.platform}`}>{platformName}</span></span>{post.profileHeadline && <span className="profile-headline">{post.profileHeadline}</span>}<span className="post-meta"><time dateTime={post.publishedAt}>{formatRelativeDate(post.publishedAt)}</time></span></div></div>{seen && <span className="seen-mark"><Icon name="check" /> Read</span>}</header>
       {post.kind !== "original" && <div className="repost-context"><Icon name="repost" /><span>{post.kind === "quote" ? "Shared with commentary by" : "Reposted by"} <strong>{post.profileName}</strong></span></div>}
       <p className={`post-copy ${isLong && !expanded ? "clamped" : ""}`}>{post.content}</p>
       {isLong && <button className="expand-post" type="button" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded}>{expanded ? "Show less" : "…see more"}</button>}
       <PostAttachment post={post} />
-      <footer className="card-footer"><div className="metrics" aria-label={`${post.likes} reactions, ${post.comments} comments, and ${post.reposts} reposts`}><span><Icon name="heart" />{numberFormatter.format(post.likes)}</span><span><Icon name="comment" />{numberFormatter.format(post.comments)}</span>{post.reposts > 0 && <span><Icon name="repost" />{numberFormatter.format(post.reposts)}</span>}</div><a className="open-link" href={post.linkedinUrl} target="_blank" rel="noreferrer">Open on LinkedIn <Icon name="arrow" /></a></footer>
+      <footer className="card-footer"><div className="metrics" aria-label={`${post.likes} reactions, ${post.comments} comments, and ${post.reposts} reposts`}><span><Icon name="heart" />{numberFormatter.format(post.likes)}</span><span><Icon name="comment" />{numberFormatter.format(post.comments)}</span>{post.reposts > 0 && <span><Icon name="repost" />{numberFormatter.format(post.reposts)}</span>}</div><a className="open-link" href={post.linkedinUrl} target="_blank" rel="noreferrer">Open on {platformName} <Icon name="arrow" /></a></footer>
     </div>
   </article>;
 }
@@ -157,14 +159,14 @@ function UrlEntry({ minimum = 1, initialValue = "", submitLabel = "Add people", 
   const [busy, setBusy] = useState(false);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const parsed = parseLinkedInUrls(value);
+    const parsed = parseSocialUrls(value);
     if (parsed.invalid.length > 0) return setError(`Check this entry: ${parsed.invalid[0]}`);
-    if (parsed.urls.length < minimum) return setError(`Add at least ${minimum} LinkedIn profile URLs.`);
+    if (parsed.urls.length < minimum) return setError(`Add at least ${minimum} LinkedIn or X profile URLs.`);
     setBusy(true);
     setError(null);
     try { await onSubmit(parsed.urls); setValue(""); } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Could not add these people."); } finally { setBusy(false); }
   }
-  return <form className="url-form" onSubmit={(event) => void submit(event)}><label htmlFor="linkedin-urls">LinkedIn profile URLs</label><textarea id="linkedin-urls" value={value} onChange={(event) => setValue(event.target.value)} placeholder="linkedin.com/in/person-one, linkedin.com/in/person-two, linkedin.com/in/person-three" rows={4} spellCheck={false} /><div className="url-form-footer"><span>Separate URLs with commas or new lines.</span><button className="primary-button" disabled={busy} type="submit"><Icon name="plus" />{busy ? "Adding…" : submitLabel}</button></div>{error && <p className="inline-error" role="alert">{error}</p>}</form>;
+  return <form className="url-form" onSubmit={(event) => void submit(event)}><label htmlFor="social-urls">LinkedIn or X profile URLs</label><textarea id="social-urls" value={value} onChange={(event) => setValue(event.target.value)} placeholder="linkedin.com/in/person, x.com/handle" rows={4} spellCheck={false} /><div className="url-form-footer"><span>Separate URLs with commas or new lines.</span><button className="primary-button" disabled={busy} type="submit"><Icon name="plus" />{busy ? "Adding…" : submitLabel}</button></div>{error && <p className="inline-error" role="alert">{error}</p>}</form>;
 }
 
 function AuthScreen() {
@@ -205,7 +207,7 @@ function AuthScreen() {
       setBusy(false);
     }
   }
-  return <main className="auth-page"><section className="auth-story"><Brand /><div className="auth-thesis"><span className="auth-kicker">Your LinkedIn, edited</span><h1>Keep up with<br />the few who matter.</h1><p>A private daily reading list from the people you choose. Read it once, reach the end, get on with your day.</p></div><FocusPreview /></section><section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span>{mode === "signup" ? "Start your finite feed" : "Welcome back"}</span><p>{mode === "signup" ? "Create your account first. You’ll choose people next." : "We’ll email you a secure sign-in link."}</p></div><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{isGoogleAuthEnabled && <><button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div></>}<label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : "Continue with email"}</button><p className="passwordless-note">No password to remember.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></div></section></main>;
+  return <main className="auth-page"><section className="auth-story"><Brand /><div className="auth-thesis"><span className="auth-kicker">Your social feed, edited</span><h1>Keep up with<br />the few who matter.</h1><p>A private daily reading list from the people you choose. Read it once, reach the end, get on with your day.</p></div><FocusPreview /></section><section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span>{mode === "signup" ? "Start your finite feed" : "Welcome back"}</span><p>{mode === "signup" ? "Create your account first. You’ll choose people next." : "We’ll email you a secure sign-in link."}</p></div><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{isGoogleAuthEnabled && <><button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div></>}<label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : "Continue with email"}</button><p className="passwordless-note">No password to remember.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></div></section></main>;
 }
 
 function Onboarding() {
@@ -237,7 +239,7 @@ function Onboarding() {
     return () => { stopped = true; if (timeout) window.clearTimeout(timeout); };
   }, [complete, pollCycle]);
   if (complete) return <div className="centered-state building-state"><Brand /><span className="building-pulse" aria-hidden="true" /><h1>{buildError ? "The refresh paused." : "Building your feed…"}</h1><p>{buildError ?? "Checking the past week for posts. This usually takes less than a minute."}</p>{buildError && <button className="primary-button" type="button" onClick={() => { setBuildError(null); void startRefresh().then(() => setPollCycle((current) => current + 1)).catch((error: unknown) => setBuildError(error instanceof Error ? error.message : "Could not retry the refresh.")); }}><Icon name="refresh" />Retry refresh</button>}</div>;
-  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol></header><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn profiles. Finite Feed collects their original posts and reposts without needing your LinkedIn login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); }} /></div></section><ClaudeSelectionGuide /></main>;
+  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol></header><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn or X profiles. Finite Feed collects their original posts and reposts without needing either account login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); }} /></div></section><ClaudeSelectionGuide /></main>;
 }
 
 function FeedApp() {

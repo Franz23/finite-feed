@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { VercelRequest } from "@vercel/node";
 import { canonicalLinkedInProfileUrl } from "../../src/linkedin.js";
+import { canonicalSocialProfileUrl, type SocialPlatform } from "../../src/social.js";
 import type { PostImage, PostMedia } from "../../src/types.js";
 import { adminClient, publicAppUrl } from "./supabase.js";
 
@@ -18,6 +19,7 @@ type ActorPost = {
   profileHeadline: string | null;
   profileAvatarUrl: string | null;
   media: PostMedia | null;
+  platform: SocialPlatform;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -137,16 +139,72 @@ function normalizeActorPost(
     profileHeadline: authorIsTracked ? stringValue(author, "info") : null,
     profileAvatarUrl: authorIsTracked ? httpsUrl(avatar?.url) : httpsUrl(headerImage?.url),
     media: actorMedia(value),
+    platform: "linkedin",
   };
 }
 
-export async function startActorRun(request: VercelRequest, targetUrls: string[], userId: string | null, days: number) {
+function xMedia(item: Record<string, unknown>): PostMedia | null {
+  const entries = Array.isArray(item.media) ? item.media.filter(isRecord) : [];
+  const images = entries.flatMap((entry) => {
+    const type = (stringValue(entry, "type") ?? "").toLowerCase();
+    const url = httpsUrl(entry.url) ?? httpsUrl(entry.mediaUrl) ?? httpsUrl(entry.media_url_https);
+    return type === "photo" && url ? [{ url, width: optionalNumber(entry, "width"), height: optionalNumber(entry, "height") }] : [];
+  }).slice(0, 4);
+  const videoEntry = entries.find((entry) => ["video", "animated_gif"].includes((stringValue(entry, "type") ?? "").toLowerCase()));
+  const videoUrl = httpsUrl(videoEntry?.videoUrl) ?? httpsUrl(videoEntry?.url);
+  const video = videoUrl ? {
+    url: videoUrl,
+    thumbnailUrl: httpsUrl(videoEntry?.previewImageUrl) ?? httpsUrl(videoEntry?.thumbnailUrl),
+  } : null;
+  return images.length > 0 || video ? { images, video, document: null } : null;
+}
+
+function normalizeXPost(
+  value: unknown,
+  profiles: Map<string, { id: string; url: string }>,
+): ActorPost | null {
+  if (!isRecord(value) || value.isReply === true) return null;
+  const username = stringValue(value, "authorUserName") ?? stringValue(nested(value, "author"), "userName") ?? stringValue(nested(value, "author"), "username");
+  const canonical = username ? canonicalSocialProfileUrl(`https://x.com/${username}`) : null;
+  const tracked = canonical ? profiles.get(canonical.url) : null;
+  if (!tracked) return null;
+  const id = stringValue(value, "id") ?? stringValue(value, "tweetId");
+  const postUrl = stringValue(value, "url") ?? (id ? `${tracked.url}/status/${id}` : null);
+  const rawDate = stringValue(value, "createdAt");
+  if (!id || !postUrl || !rawDate || Number.isNaN(Date.parse(rawDate))) return null;
+  const author = nested(value, "author");
+  return {
+    id: `x:${id}`,
+    profileId: tracked.id,
+    linkedinUrl: postUrl,
+    content: stringValue(value, "text") ?? "",
+    kind: value.isQuote === true ? "quote" : value.isRetweet === true ? "repost" : "original",
+    publishedAt: new Date(rawDate).toISOString(),
+    likes: numberValue(value, "likeCount"),
+    comments: numberValue(value, "replyCount"),
+    reposts: numberValue(value, "retweetCount") + numberValue(value, "quoteCount"),
+    profileName: stringValue(author, "name") ?? username,
+    profileHeadline: stringValue(author, "description"),
+    profileAvatarUrl: httpsUrl(author?.profilePicture),
+    media: xMedia(value),
+    platform: "x",
+  };
+}
+
+export async function startActorRun(
+  request: VercelRequest,
+  targetUrls: string[],
+  userId: string | null,
+  days: number,
+  platform: SocialPlatform = "linkedin",
+  batchId?: string,
+) {
   const token = process.env.APIFY_API_TOKEN;
   const secret = process.env.APIFY_WEBHOOK_SECRET;
   if (!token || !secret) throw new Error("Apify is not configured.");
   const db = adminClient();
   const { data: run, error: createError } = await db.from("refresh_runs").insert({
-    user_id: userId, status: "starting", target_urls: targetUrls, started_at: new Date().toISOString(),
+    user_id: userId, status: "starting", target_urls: targetUrls, platform, batch_id: batchId, started_at: new Date().toISOString(),
   }).select("id").single();
   if (createError) throw createError;
   const callbackUrl = `${publicAppUrl(request)}/api/apify-webhook`;
@@ -157,13 +215,22 @@ export async function startActorRun(request: VercelRequest, targetUrls: string[]
     payloadTemplate: '{"eventType":{{eventType}},"resource":{{resource}}}',
     headersTemplate: JSON.stringify({ Authorization: `Bearer ${secret}` }),
   }])).toString("base64");
-  const actorId = process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
+  const actorId = platform === "x"
+    ? process.env.APIFY_X_ACTOR_ID || "nick.cheng~x-twitter-profile-tweets-scraper"
+    : process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
   const actorUrl = new URL(`https://api.apify.com/v2/acts/${actorId}/runs`);
   actorUrl.searchParams.set("webhooks", webhooks);
   const actorResponse = await fetch(actorUrl, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: JSON.stringify(platform === "x" ? {
+      twitterHandles: targetUrls.map((url) => new URL(url).pathname.split("/").filter(Boolean)[0]),
+      maxTweetsPerProfile: 20,
+      since: new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10),
+      includeReplies: false,
+      includeRetweets: true,
+      includeAuthorProfile: true,
+    } : {
       targetUrls, maxPosts: 0,
       postedLimitDate: new Date(Date.now() - days * 86_400_000).toISOString(),
       includeReposts: true, includeQuotePosts: true, scrapeComments: false, scrapeReactions: false,
@@ -182,11 +249,11 @@ export async function startActorRun(request: VercelRequest, targetUrls: string[]
   return actorRunId;
 }
 
-export async function ingestDataset(datasetId: string): Promise<number> {
+export async function ingestDataset(datasetId: string, platform: SocialPlatform = "linkedin"): Promise<number> {
   const token = process.env.APIFY_API_TOKEN;
   if (!token) throw new Error("Apify is not configured.");
   const db = adminClient();
-  const { data: profileRows, error: profileError } = await db.from("profiles").select("id, linkedin_url").limit(5000);
+  const { data: profileRows, error: profileError } = await db.from("profiles").select("id, linkedin_url, platform").eq("platform", platform).limit(5000);
   if (profileError) throw profileError;
   const typedProfiles = (profileRows ?? []) as Array<{ id: string; linkedin_url: string }>;
   const profiles = new Map<string, { id: string; url: string }>(typedProfiles.map((profile) => [profile.linkedin_url, { id: profile.id, url: profile.linkedin_url }]));
@@ -198,7 +265,7 @@ export async function ingestDataset(datasetId: string): Promise<number> {
   if (!response.ok) throw new Error(`Could not fetch Apify dataset (${response.status}).`);
   const payload: unknown = await response.json();
   if (!Array.isArray(payload)) throw new Error("Apify returned an unexpected dataset shape.");
-  const candidates = payload.map((item) => normalizeActorPost(item, profiles)).filter((post): post is ActorPost => post !== null);
+  const candidates = payload.map((item) => platform === "x" ? normalizeXPost(item, profiles) : normalizeActorPost(item, profiles)).filter((post): post is ActorPost => post !== null);
   const uniqueByUrl = [...new Map(candidates.map((post) => [post.linkedinUrl, post])).values()];
   if (uniqueByUrl.length === 0) return 0;
   const { data: existingPosts, error: existingError } = await db
@@ -217,7 +284,7 @@ export async function ingestDataset(datasetId: string): Promise<number> {
   const { error: postsError } = await db.from("posts").upsert(normalized.map((post) => ({
     id: post.id, profile_id: post.profileId, linkedin_url: post.linkedinUrl, content: post.content,
     post_kind: post.kind, published_at: post.publishedAt, likes: post.likes, comments: post.comments,
-    reposts: post.reposts, media: post.media, last_observed_at: now,
+    reposts: post.reposts, media: post.media, platform: post.platform, last_observed_at: now,
   })), { onConflict: "id" });
   if (postsError) throw postsError;
   const profileUpdates = new Map<string, ActorPost>();
@@ -242,15 +309,16 @@ export async function ingestDataset(datasetId: string): Promise<number> {
 }
 
 export async function finalizeActorRun(actorRunId: string, datasetId: string): Promise<number> {
-  const count = await ingestDataset(datasetId);
   const db = adminClient();
   const now = new Date().toISOString();
   const { data: refreshRun, error: refreshError } = await db
     .from("refresh_runs")
-    .select("target_urls")
+    .select("target_urls, platform")
     .eq("actor_run_id", actorRunId)
     .maybeSingle();
   if (refreshError) throw refreshError;
+  const platform: SocialPlatform = refreshRun?.platform === "x" ? "x" : "linkedin";
+  const count = await ingestDataset(datasetId, platform);
   const targetUrls = Array.isArray(refreshRun?.target_urls)
     ? refreshRun.target_urls.filter((url: unknown): url is string => typeof url === "string")
     : [];

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { canonicalLinkedInProfileUrl } from "../src/linkedin.js";
+import { canonicalSocialProfileUrl, type SocialProfileUrl } from "../src/social.js";
 import { apiError, methodNotAllowed } from "./_lib/http.js";
 import { adminClient, requireUser } from "./_lib/supabase.js";
 
@@ -17,16 +17,19 @@ export default async function handler(request: VercelRequest, response: VercelRe
     }
 
     const candidates = Array.isArray(request.body?.urls) ? request.body.urls : [];
-    const urls = [...new Set(candidates.flatMap((value: unknown) => {
+    const parsed: SocialProfileUrl[] = candidates.flatMap((value: unknown): SocialProfileUrl[] => {
       if (typeof value !== "string") return [];
-      const canonical = canonicalLinkedInProfileUrl(value);
+      const canonical = canonicalSocialProfileUrl(value);
       return canonical ? [canonical] : [];
-    }))].slice(0, 100);
-    if (urls.length === 0) throw new Error("Add at least one public LinkedIn profile URL.");
+    });
+    const profilesByUrl = new Map(parsed.map((profile) => [profile.url, profile]));
+    const profileInputs = [...profilesByUrl.values()].slice(0, 100);
+    const urls = profileInputs.map((profile) => profile.url);
+    if (urls.length === 0) throw new Error("Add at least one public LinkedIn or X profile URL.");
 
     const { error: profileError } = await db
       .from("profiles")
-      .upsert(urls.map((linkedin_url) => ({ linkedin_url, updated_at: new Date().toISOString() })), {
+      .upsert(profileInputs.map(({ url: linkedin_url, platform }) => ({ linkedin_url, platform, updated_at: new Date().toISOString() })), {
         onConflict: "linkedin_url",
         ignoreDuplicates: true,
       });

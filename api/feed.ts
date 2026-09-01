@@ -11,6 +11,7 @@ type ProfileRow = {
   headline: string | null;
   avatar_url: string | null;
   last_scraped_at: string | null;
+  platform: "linkedin" | "x";
 };
 
 type PostRow = {
@@ -24,6 +25,19 @@ type PostRow = {
   comments: number;
   reposts: number;
   media: FeedPost["media"];
+  platform: "linkedin" | "x";
+};
+
+type RefreshRow = {
+  id: string;
+  batch_id: string | null;
+  status: RefreshStatus["status"];
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+  actor_run_id: string | null;
+  target_urls: unknown;
+  posts_received: number;
 };
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -33,7 +47,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const db = adminClient();
     const { data: follows, error: followsError } = await db
       .from("user_follows")
-      .select("profile_id, profiles(id, name, linkedin_url, headline, avatar_url, last_scraped_at)")
+      .select("profile_id, profiles(id, name, linkedin_url, headline, avatar_url, last_scraped_at, platform)")
       .eq("user_id", user.id);
     if (followsError) throw followsError;
 
@@ -43,6 +57,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       id: profile.id,
       name: profile.name,
       linkedinUrl: profile.linkedin_url,
+      platform: profile.platform,
       lastScrapedAt: profile.last_scraped_at,
     }));
     const profileById = new Map(profileRows.map((profile) => [profile.id, profile]));
@@ -55,38 +70,42 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(200).json(payload);
     }
 
-    let { data: latestRefresh } = await db
+    const refreshSelect = "id, batch_id, status, started_at, finished_at, error, actor_run_id, target_urls, posts_received";
+    const { data: latestRefresh } = await db
       .from("refresh_runs")
-      .select("status, started_at, finished_at, error, actor_run_id, target_urls, posts_received")
+      .select(refreshSelect)
       .or(`user_id.eq.${user.id},user_id.is.null`)
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (
-      latestRefresh?.actor_run_id &&
-      (latestRefresh.status === "starting" || latestRefresh.status === "running")
-    ) {
+    let refreshRows: RefreshRow[] = latestRefresh
+      ? latestRefresh.batch_id
+        ? (await db.from("refresh_runs").select(refreshSelect).eq("batch_id", latestRefresh.batch_id)).data ?? []
+        : [latestRefresh]
+      : [];
+    await Promise.all(refreshRows.filter((run) => run.actor_run_id && ["starting", "running"].includes(run.status)).map(async (run) => {
       try {
-        const status = await reconcileActorRun(latestRefresh.actor_run_id);
-        if (status !== "running") {
-          const { data: reconciled } = await db
-            .from("refresh_runs")
-            .select("status, started_at, finished_at, error, actor_run_id, target_urls, posts_received")
-            .eq("actor_run_id", latestRefresh.actor_run_id)
-            .maybeSingle();
-          if (reconciled) latestRefresh = reconciled;
-        }
+        if (run.actor_run_id) await reconcileActorRun(run.actor_run_id);
       } catch (error) {
         console.error("Apify reconciliation failed:", errorMessage(error));
       }
+    }));
+    if (latestRefresh?.batch_id) {
+      refreshRows = (await db.from("refresh_runs").select(refreshSelect).eq("batch_id", latestRefresh.batch_id)).data ?? [];
+    } else if (latestRefresh) {
+      refreshRows = [(await db.from("refresh_runs").select(refreshSelect).eq("id", latestRefresh.id).single()).data ?? latestRefresh];
     }
-    let refresh: RefreshStatus = latestRefresh ? {
-      status: latestRefresh.status,
-      startedAt: latestRefresh.started_at,
-      finishedAt: latestRefresh.finished_at,
-      error: latestRefresh.error,
-      profileCount: Array.isArray(latestRefresh.target_urls) ? latestRefresh.target_urls.length : profileRows.length,
-      postsReceived: typeof latestRefresh.posts_received === "number" ? latestRefresh.posts_received : 0,
+    const activeRuns = refreshRows.filter((run) => ["starting", "running"].includes(run.status));
+    const failedRun = refreshRows.find((run) => run.status === "failed");
+    const startedAt = refreshRows.map((run) => run.started_at).sort()[0] ?? null;
+    const finishedAt = refreshRows.map((run) => run.finished_at).filter((date): date is string => Boolean(date)).sort().at(-1) ?? null;
+    let refresh: RefreshStatus = refreshRows.length ? {
+      status: activeRuns.length ? "running" : failedRun ? "failed" : "succeeded",
+      startedAt,
+      finishedAt,
+      error: failedRun?.error ?? null,
+      profileCount: refreshRows.reduce((total, run) => total + (Array.isArray(run.target_urls) ? run.target_urls.length : 0), 0),
+      postsReceived: refreshRows.reduce((total, run) => total + (typeof run.posts_received === "number" ? run.posts_received : 0), 0),
     } : { status: "idle", startedAt: null, finishedAt: null, error: null, profileCount: 0, postsReceived: 0 };
     if (
       (refresh.status === "starting" || refresh.status === "running") &&
@@ -95,13 +114,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     ) {
       const finishedAt = new Date().toISOString();
       const error = "The refresh did not finish within three minutes. No more waiting—try it again.";
-      await db.from("refresh_runs").update({ status: "failed", finished_at: finishedAt, error }).eq("started_at", refresh.startedAt);
+      await db.from("refresh_runs").update({ status: "failed", finished_at: finishedAt, error }).in("id", activeRuns.map((run) => run.id));
       refresh = { ...refresh, status: "failed", finishedAt, error };
     }
 
     const { data: posts, error: postsError } = await db
       .from("posts")
-      .select("id, profile_id, linkedin_url, content, post_kind, published_at, likes, comments, reposts, media")
+      .select("id, profile_id, linkedin_url, content, post_kind, published_at, likes, comments, reposts, media, platform")
       .in("profile_id", profileIds)
       .order("published_at", { ascending: false })
       .limit(250);
@@ -126,7 +145,8 @@ export default async function handler(request: VercelRequest, response: VercelRe
         profileHeadline: profile.headline,
         profileAvatarUrl: profile.avatar_url,
         linkedinUrl: post.linkedin_url,
-        content: post.content || "Open this post on LinkedIn to read it.",
+        platform: post.platform,
+        content: post.content || `Open this post on ${post.platform === "x" ? "X" : "LinkedIn"} to read it.`,
         kind: post.post_kind,
         publishedAt: post.published_at,
         likes: post.likes,
@@ -138,7 +158,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const { data: historyReads, error: historyError } = await db
       .from("post_reads")
-      .select("seen_at, posts!inner(id, linkedin_url, published_at, profiles!inner(name))")
+      .select("seen_at, posts!inner(id, linkedin_url, published_at, platform, profiles!inner(name))")
       .eq("user_id", user.id)
       .order("seen_at", { ascending: false })
       .limit(1000);
@@ -147,6 +167,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       id: string;
       linkedin_url: string;
       published_at: string;
+      platform: "linkedin" | "x";
       profiles: { name: string | null } | Array<{ name: string | null }>;
     };
     const history: HistoryItem[] = (historyReads ?? []).flatMap((read: { seen_at: string; posts: unknown }) => {
@@ -159,6 +180,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
         id: post.id,
         profileName: profile?.name || "LinkedIn member",
         linkedinUrl: post.linkedin_url,
+        platform: post.platform,
         publishedAt: post.published_at,
         seenAt: read.seen_at,
       }];
