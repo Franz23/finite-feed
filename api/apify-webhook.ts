@@ -21,8 +21,25 @@ export default async function handler(request: VercelRequest, response: VercelRe
       return response.status(202).json({ accepted: true });
     }
     const count = await ingestDataset(details.datasetId);
+    const now = new Date().toISOString();
+    const { data: refreshRun, error: refreshError } = await db
+      .from("refresh_runs")
+      .select("target_urls")
+      .eq("actor_run_id", details.actorRunId)
+      .maybeSingle();
+    if (refreshError) throw refreshError;
+    const targetUrls = Array.isArray(refreshRun?.target_urls)
+      ? refreshRun.target_urls.filter((url): url is string => typeof url === "string")
+      : [];
+    if (targetUrls.length > 0) {
+      const { error: profileError } = await db
+        .from("profiles")
+        .update({ last_scraped_at: now, updated_at: now })
+        .in("linkedin_url", targetUrls);
+      if (profileError) throw profileError;
+    }
     const { error } = await db.from("refresh_runs").update({
-      status: "succeeded", finished_at: new Date().toISOString(), posts_received: count, error: null,
+      status: "succeeded", finished_at: now, posts_received: count, error: null,
     }).eq("actor_run_id", details.actorRunId);
     if (error) throw error;
     return response.status(202).json({ accepted: true, posts: count });

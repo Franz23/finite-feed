@@ -57,6 +57,11 @@ export async function markSeen(ids: string[]): Promise<void> {
   );
 }
 
-export async function startRefresh(): Promise<void> {
-  await parseResponse<{ status: string }>(await authorizedFetch("/api/refresh", { method: "POST" }));
+export async function startRefresh(force = false): Promise<string> {
+  const result = await parseResponse<{ status: string }>(await authorizedFetch("/api/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ force }),
+  }));
+  return result.status;
 }

@@ -91,16 +91,31 @@ export default async function handler(request: VercelRequest, response: VercelRe
       }];
     });
 
-    const history: HistoryItem[] = postRows.filter((post) => readById.has(post.id)).slice(0, 100).flatMap((post) => {
-      const profile = profileById.get(post.profile_id);
-      const seenAt = readById.get(post.id);
-      if (!profile || !seenAt) return [];
+    const { data: historyReads, error: historyError } = await db
+      .from("post_reads")
+      .select("seen_at, posts!inner(id, linkedin_url, published_at, profiles!inner(name))")
+      .eq("user_id", user.id)
+      .order("seen_at", { ascending: false })
+      .limit(1000);
+    if (historyError) throw historyError;
+    type HistoryPostRow = {
+      id: string;
+      linkedin_url: string;
+      published_at: string;
+      profiles: { name: string | null } | Array<{ name: string | null }>;
+    };
+    const history: HistoryItem[] = (historyReads ?? []).flatMap((read) => {
+      const rawPost = read.posts as HistoryPostRow | HistoryPostRow[];
+      const post = Array.isArray(rawPost) ? rawPost[0] : rawPost;
+      if (!post) return [];
+      const rawProfile = post.profiles;
+      const profile = Array.isArray(rawProfile) ? rawProfile[0] : rawProfile;
       return [{
         id: post.id,
-        profileName: profile.name || "LinkedIn member",
+        profileName: profile?.name || "LinkedIn member",
         linkedinUrl: post.linkedin_url,
         publishedAt: post.published_at,
-        seenAt,
+        seenAt: read.seen_at,
       }];
     });
 

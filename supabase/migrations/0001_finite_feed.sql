@@ -46,6 +46,7 @@ create table public.refresh_runs (
   user_id uuid references auth.users(id) on delete set null,
   actor_run_id text unique,
   status text not null check (status in ('starting', 'running', 'succeeded', 'failed')),
+  target_urls jsonb not null default '[]'::jsonb,
   started_at timestamptz not null default now(),
   finished_at timestamptz,
   posts_received integer not null default 0,

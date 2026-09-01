@@ -12,6 +12,20 @@ type SortMode = "recent" | "engaged";
 const isGoogleAuthEnabled = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
 
 const numberFormatter = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const claudeSelectionPrompt = `I want to create a focused LinkedIn reading list, not import my entire network.
+
+Analyze the LinkedIn data export I attach. Start by asking what people, topics, industries, or relationships I want to stay current with.
+
+Then recommend 10–25 people to follow. Prioritize:
+1. How recently we exchanged messages.
+2. Meaningful message volume and reciprocity.
+3. Relevance to the goals I described.
+
+Do not include company pages, weak one-off contacts, or people without a public LinkedIn profile URL. Do not reproduce private message content in the result.
+
+Return:
+- A short table with name, why they matter, and LinkedIn URL.
+- A final comma-separated list containing only the selected LinkedIn profile URLs, ready to paste into Finite Feed.`;
 
 function formatRelativeDate(value: string): string {
   const date = new Date(value);
@@ -51,6 +65,19 @@ function GoogleMark() {
 
 function FocusPreview() {
   return <div className="focus-preview" aria-hidden="true"><header><span>Today’s signal</span><strong>3</strong></header><div className="preview-stack"><div className="preview-post muted"><span className="preview-avatar">A</span><div><strong>Someone you follow</strong><span>Shared a new perspective</span></div><time>18m</time></div><div className="preview-post active"><span className="preview-avatar">B</span><div><strong>Worth your attention</strong><span>Original post · 42 reactions</span></div><time>2h</time></div><div className="preview-post muted"><span className="preview-avatar">C</span><div><strong>From your inner circle</strong><span>Reposted with context</span></div><time>5h</time></div></div><footer><span>End of today’s feed</span><Icon name="check" /></footer></div>;
+}
+
+function ClaudeSelectionGuide() {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  async function copyPrompt() {
+    try {
+      await navigator.clipboard.writeText(claudeSelectionPrompt);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+  return <details className="selection-guide"><summary><span>Need help choosing people?</span><span>Use your LinkedIn network with Claude</span></summary><div className="selection-guide-body"><div className="selection-guide-copy"><span className="guide-kicker">Alternative method</span><h2>Turn your network into a shortlist.</h2><p>Your LinkedIn export is only a shortcut for giving Claude access to your network. You do not upload the archive to Finite Feed.</p><ol><li><span>1</span><p>In LinkedIn, open <strong>Settings → Data privacy → Download your data</strong> and request your archive.</p></li><li><span>2</span><p>Give that archive to Claude with the prompt below. Claude will help you choose the people worth following.</p></li><li><span>3</span><p>Copy Claude’s final list of profile URLs into Finite Feed above.</p></li></ol></div><figure><img src="/linkedin-data-download.png" alt="LinkedIn settings showing Data privacy selected and Download your data highlighted" loading="lazy" decoding="async" /><figcaption>Where to find LinkedIn’s data download.</figcaption></figure><div className="claude-prompt"><div className="claude-prompt-header"><strong>Prompt for Claude</strong><button type="button" onClick={() => void copyPrompt()}>{copyState === "copied" ? "Copied" : "Copy prompt"}</button></div><pre>{claudeSelectionPrompt}</pre>{copyState === "failed" && <p className="inline-error" role="alert">Copy failed. Select the prompt text and copy it manually.</p>}</div></div></details>;
 }
 
 function Skeleton() {
@@ -151,8 +178,34 @@ function AuthScreen() {
 
 function Onboarding() {
   const [complete, setComplete] = useState(false);
-  if (complete) return <div className="centered-state"><Brand /><h1>Building your feed…</h1><p>Your first week of posts is being collected. Reloading shortly.</p></div>;
-  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol></header><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn profiles. Finite Feed collects their original posts and reposts without needing your LinkedIn login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); window.setTimeout(() => window.location.reload(), 4_000); }} /></div></section></main>;
+  const [buildError, setBuildError] = useState<string | null>(null);
+  const [pollCycle, setPollCycle] = useState(0);
+  useEffect(() => {
+    if (!complete) return;
+    let stopped = false;
+    let timeout: number | undefined;
+    async function checkRefresh() {
+      try {
+        const data = await getBootstrap();
+        if (stopped) return;
+        if (data.feed.length > 0 || data.refresh.status === "succeeded") {
+          window.location.reload();
+          return;
+        }
+        if (data.refresh.status === "failed") {
+          setBuildError(data.refresh.error ?? "The first refresh did not finish.");
+          return;
+        }
+      } catch {
+        if (stopped) return;
+      }
+      timeout = window.setTimeout(() => void checkRefresh(), 3_000);
+    }
+    void checkRefresh();
+    return () => { stopped = true; if (timeout) window.clearTimeout(timeout); };
+  }, [complete, pollCycle]);
+  if (complete) return <div className="centered-state building-state"><Brand /><span className="building-pulse" aria-hidden="true" /><h1>{buildError ? "The refresh paused." : "Building your feed…"}</h1><p>{buildError ?? "Checking the past week for posts. This usually takes less than a minute."}</p>{buildError && <button className="primary-button" type="button" onClick={() => { setBuildError(null); void startRefresh().then(() => setPollCycle((current) => current + 1)).catch((error: unknown) => setBuildError(error instanceof Error ? error.message : "Could not retry the refresh.")); }}><Icon name="refresh" />Retry refresh</button>}</div>;
+  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol></header><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn profiles. Finite Feed collects their original posts and reposts without needing your LinkedIn login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); }} /></div></section><ClaudeSelectionGuide /></main>;
 }
 
 function FeedApp() {
@@ -163,21 +216,51 @@ function FeedApp() {
   const [message, setMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState("");
   const [sessionSeen, setSessionSeen] = useState<Set<string>>(() => new Set());
+  const autoRefreshAttempted = useRef(false);
   const reload = useCallback(async (signal?: AbortSignal) => { const next = await getBootstrap(signal); setData(next); setLoading(false); }, []);
   useEffect(() => { const controller = new AbortController(); void reload(controller.signal).catch((error: unknown) => { if (error instanceof DOMException && error.name === "AbortError") return; setActionError(error instanceof Error ? error.message : "Could not load the feed."); setLoading(false); }); return () => controller.abort(); }, [reload]);
   useEffect(() => { if (data?.refresh.status !== "running" && data?.refresh.status !== "starting") return; const timeout = window.setTimeout(() => void reload().catch(() => undefined), 5_000); return () => window.clearTimeout(timeout); }, [data?.refresh.status, reload]);
+  useEffect(() => {
+    if (!data || autoRefreshAttempted.current || data.profiles.length < 3) return;
+    autoRefreshAttempted.current = true;
+    void startRefresh().then((status) => {
+      if (status === "running" || status === "starting") return reload();
+    }).catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not check for new posts."));
+  }, [data, reload]);
   const sortedFeed = useMemo(() => {
     const posts = [...(data?.feed ?? [])];
     if (sort === "recent") return posts.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
     const score = (post: FeedPost) => post.likes + post.comments * 4 + post.reposts * 2;
     return posts.sort((a, b) => score(b) - score(a) || Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
   }, [data?.feed, sort]);
+  const filteredHistory = useMemo(() => {
+    const query = historyQuery.trim().toLowerCase();
+    if (!query) return data?.history ?? [];
+    return (data?.history ?? []).filter((item) =>
+      item.profileName.toLowerCase().includes(query) || item.linkedinUrl.toLowerCase().includes(query),
+    );
+  }, [data?.history, historyQuery]);
   const handleSeen = useCallback((id: string) => { setSessionSeen((current) => new Set(current).add(id)); void markSeen([id]).catch((error: unknown) => { setSessionSeen((current) => { const next = new Set(current); next.delete(id); return next; }); setActionError(error instanceof Error ? error.message : "Could not remember that post."); }); }, []);
-  async function refresh() { setBusy(true); setActionError(null); try { await startRefresh(); setMessage("Refresh started. New posts will appear here shortly."); await reload(); } catch (error) { setActionError(error instanceof Error ? error.message : "Refresh could not start."); } finally { setBusy(false); } }
+  async function refresh() { setBusy(true); setActionError(null); try { await startRefresh(true); setMessage("Refresh started. New posts will appear here shortly."); await reload(); } catch (error) { setActionError(error instanceof Error ? error.message : "Refresh could not start."); } finally { setBusy(false); } }
   const today = new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
   const isRefreshing = data?.refresh.status === "running" || data?.refresh.status === "starting";
-  return <div className="app-shell"><header className="topbar"><button className="brand-button" onClick={() => setView("today")}><Brand compact /></button><nav aria-label="Feed sections">{(["today", "people", "history"] as const).map((item) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{item}</button>)}</nav><button className="refresh-button" disabled={busy || isRefreshing} onClick={() => void refresh()}><Icon name="refresh" /><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button></header><main id="top"><section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? sortedFeed.length : view === "people" ? data?.profiles.length ?? 0 : data?.history.length ?? 0}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : "saved links"}</span></div></section>{(message || actionError) && <div className={`notice ${actionError ? "error" : "success"}`} role={actionError ? "alert" : "status"}><span>{actionError ?? message}</span><button aria-label="Dismiss message" onClick={() => { setMessage(null); setActionError(null); }}><Icon name="close" /></button></div>}{view === "today" && <section className="feed" aria-label="Unread LinkedIn posts">{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<div className="end-note"><span>End of your finite feed</span></div></> : <section className="empty-state"><span className="empty-kicker">All caught up</span><h2>Nothing new to read.</h2><p>Refresh when you want to check for new posts.</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Refresh now</button></section>}</section>}{view === "people" && <section className="people-view"><UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added.`); await reload(); }} />{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}{view === "history" && <section className="history-view"><p className="history-intro">Only the link, person, and date remain in your personal history.</p>{data?.history.length ? <ol className="history-list">{data.history.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on LinkedIn`}><Icon name="arrow" /></a></li>)}</ol> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Read links will collect here.</h2></section>}</section>}</main><footer className="site-footer"><span>Signal over noise.</span><span>Finite Feed</span></footer></div>;
+  return <div className="app-shell">
+    <header className="topbar">
+      <button className="brand-button" onClick={() => setView("today")}><Brand compact /></button>
+      <nav aria-label="Feed sections">{(["today", "people", "history"] as const).map((item) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
+      <button className="refresh-button" disabled={busy || isRefreshing} onClick={() => void refresh()}><Icon name="refresh" /><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button>
+    </header>
+    <main id="top">
+      <section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? sortedFeed.length : view === "people" ? data?.profiles.length ?? 0 : filteredHistory.length}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : historyQuery ? "matching links" : "saved links"}</span></div></section>
+      {(message || actionError) && <div className={`notice ${actionError ? "error" : "success"}`} role={actionError ? "alert" : "status"}><span>{actionError ?? message}</span><button aria-label="Dismiss message" onClick={() => { setMessage(null); setActionError(null); }}><Icon name="close" /></button></div>}
+      {view === "today" && <section className="feed" aria-label="Unread LinkedIn posts">{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<div className="end-note"><span>End of your finite feed</span></div></> : isRefreshing ? <section className="empty-state building-feed" role="status"><span className="empty-kicker">First refresh in progress</span><h2>Finding your posts…</h2><p>We’re checking the past week for updates. This page will fill itself when they’re ready.</p></section> : <section className="empty-state"><span className="empty-kicker">All caught up</span><h2>Nothing new to read.</h2><p>Refresh when you want to check for new posts.</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Refresh now</button></section>}</section>}
+      {view === "people" && <section className="people-view"><UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); const status = await startRefresh(); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added${status === "fresh" ? "." : " — checking for posts now."}`); await reload(); }} />{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : isRefreshing ? "Checking now" : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}
+      {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person or LinkedIn URL" /></div><p className="history-intro">Only the link, person, and date remain in your personal history.</p>{filteredHistory.length > 0 ? <ol className="history-list">{filteredHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on LinkedIn`}><Icon name="arrow" /></a></li>)}</ol> : historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Read links will collect here.</h2></section>}</section>}
+    </main>
+    <footer className="site-footer"><span>Signal over noise.</span><span>Finite Feed</span></footer>
+  </div>;
 }
 
 function AuthenticatedApp() {

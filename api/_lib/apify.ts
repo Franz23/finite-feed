@@ -146,7 +146,7 @@ export async function startActorRun(request: VercelRequest, targetUrls: string[]
   if (!token || !secret) throw new Error("Apify is not configured.");
   const db = adminClient();
   const { data: run, error: createError } = await db.from("refresh_runs").insert({
-    user_id: userId, status: "starting", started_at: new Date().toISOString(),
+    user_id: userId, status: "starting", target_urls: targetUrls, started_at: new Date().toISOString(),
   }).select("id").single();
   if (createError) throw createError;
   const callbackUrl = `${publicAppUrl(request)}/api/apify-webhook`;

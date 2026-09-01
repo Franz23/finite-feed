@@ -8,17 +8,18 @@ Finite Feed collects public original posts and reposts without asking for a Link
 
 - Passwordless email-link and Google authentication through Supabase Auth
 - At least three LinkedIn profile URLs during onboarding
+- Optional guidance for using a personal LinkedIn data export with Claude to produce a curated URL list; the archive is never uploaded to Finite Feed
 - Add more profiles later by pasting comma- or newline-separated URLs
 - Sort by **Most recent** or **Most engaged**
 - Inline images, videos, and document covers when the scraper returns them
 - Scroll-past read tracking with a link-only personal history
-- Daily refreshes through Vercel Cron
+- On-demand refreshes when someone opens a stale feed, adds people, or explicitly refreshes
 - Shared profile and post records so multiple users do not cause duplicate scrapes
 
 ## Stack
 
 - React + Vite
-- Vercel Functions and Cron Jobs
+- Vercel Functions
 - Supabase Auth + Postgres with Row Level Security
 - Apify using `harvestapi/linkedin-profile-posts`
 
@@ -31,7 +32,7 @@ corepack pnpm install
 cp .env.example .env.local
 ```
 
-Create a Supabase project, apply [`supabase/migrations/0001_finite_feed.sql`](supabase/migrations/0001_finite_feed.sql), and fill in `.env.local`. Never commit that file.
+Create a Supabase project, fill in `.env.local`, and run `corepack pnpm db:migrate` to apply the SQL files in `supabase/migrations` in order. Never commit `.env.local`.
 
 In Supabase Authentication, set the Site URL and allowed redirect URLs to your local and production origins. Email-link authentication works with the email provider. To show **Continue with Google**, enable the Google provider and set `VITE_GOOGLE_AUTH_ENABLED=true`. Configure custom SMTP before inviting production users because Supabase's built-in sender is intended for testing.
 
@@ -53,9 +54,9 @@ corepack pnpm dev:full
 2. Add the Supabase integration or set the variables shown in `.env.example`.
 3. Set `APP_BASE_URL` to the production URL.
 4. Apply the Supabase migration.
-5. Deploy. The daily cron is declared in `vercel.json`.
+5. Deploy. Scrapes run only from signed-in product activity; there is no background schedule.
 
-The Apify token, Supabase secret key, webhook secret, and cron secret are server-only. Only the Supabase URL and publishable key are exposed to the browser.
+The Apify token, Supabase secret key, and webhook secret are server-only. Only the Supabase URL and publishable key are exposed to the browser.
 
 ## Cost profile
 
