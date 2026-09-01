@@ -91,10 +91,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (
       (refresh.status === "starting" || refresh.status === "running") &&
       refresh.startedAt &&
-      Date.parse(refresh.startedAt) < Date.now() - 10 * 60_000
+      Date.parse(refresh.startedAt) < Date.now() - 3 * 60_000
     ) {
       const finishedAt = new Date().toISOString();
-      const error = "The refresh took too long to finish. Try it again.";
+      const error = "The refresh did not finish within three minutes. No more waiting—try it again.";
       await db.from("refresh_runs").update({ status: "failed", finished_at: finishedAt, error }).eq("started_at", refresh.startedAt);
       refresh = { ...refresh, status: "failed", finishedAt, error };
     }
