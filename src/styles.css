@@ -101,7 +101,7 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .feed-card::before { position: absolute; z-index: 1; top: 1.25rem; bottom: 1.25rem; left: 0; width: 2px; background: var(--accent); content: ""; opacity: 0; transition: opacity 140ms ease-out; }
 .feed-card:hover::before { opacity: 1; }
 .card-body { min-width: 0; }
-.repost-context { display: flex; align-items: center; gap: 0.45rem; min-width: 0; padding: 0.62rem 1rem; border-bottom: 1px solid #d8e0ec; background: #f4f7fb; color: #53647d; font-size: 0.68rem; line-height: 1.35; }
+.repost-context { display: flex; align-items: center; gap: 0.45rem; min-width: 0; margin-top: 0.75rem; padding: 0.62rem 1rem; border-top: 1px solid #d8e0ec; border-bottom: 1px solid #d8e0ec; background: #f4f7fb; color: #53647d; font-size: 0.68rem; line-height: 1.35; }
 .repost-context svg { width: 0.86rem; height: 0.86rem; color: var(--accent); }
 .repost-context span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repost-context strong { color: var(--ink); font-weight: 750; }

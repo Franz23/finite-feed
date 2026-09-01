@@ -141,8 +141,8 @@ function FeedCard({ post, onSeen }: { post: FeedPost; onSeen: (id: string) => vo
   }, [onSeen, post.id]);
   return <article className="feed-card" ref={cardRef} data-seen={seen ? "true" : "false"} data-kind={post.kind}>
     <div className="card-body">
-      {post.kind !== "original" && <div className="repost-context"><Icon name="repost" /><span><strong>{post.profileName}</strong> {post.kind === "quote" ? "shared with commentary" : "reposted this"}</span></div>}
       <header className="card-header"><div className="card-identity"><a className="avatar" href={post.profileUrl} target="_blank" rel="noreferrer" aria-label={`Open ${post.profileName}'s LinkedIn profile`}>{post.profileAvatarUrl ? <img src={post.profileAvatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(post.profileName)}</span>}</a><div className="identity-copy"><a className="person-name" href={post.profileUrl} target="_blank" rel="noreferrer">{post.profileName}</a>{post.profileHeadline && <span className="profile-headline">{post.profileHeadline}</span>}<span className="post-meta"><time dateTime={post.publishedAt}>{formatRelativeDate(post.publishedAt)}</time></span></div></div>{seen && <span className="seen-mark"><Icon name="check" /> Read</span>}</header>
+      {post.kind !== "original" && <div className="repost-context"><Icon name="repost" /><span>{post.kind === "quote" ? "Shared with commentary by" : "Reposted by"} <strong>{post.profileName}</strong></span></div>}
       <p className={`post-copy ${isLong && !expanded ? "clamped" : ""}`}>{post.content}</p>
       {isLong && <button className="expand-post" type="button" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded}>{expanded ? "Show less" : "…see more"}</button>}
       <PostAttachment post={post} />
