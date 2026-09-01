@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "linkedin-fieldnotes",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "linkedin-fieldnotes-db",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "vars": {
+    "APIFY_ACTOR_ID": "harvestapi~linkedin-profile-posts",
+    "APP_BASE_URL": "https://replace-before-deploy.example"
+  },
+  "secrets": {
+    "required": ["APIFY_API_TOKEN", "APIFY_WEBHOOK_SECRET"]
+  },
+  "triggers": {
+    "crons": ["0 14 * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  }
+}
