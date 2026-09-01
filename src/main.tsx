@@ -9,7 +9,6 @@ import "./styles.css";
 
 type View = "today" | "people" | "history";
 type SortMode = "recent" | "engaged";
-const pendingUrlsKey = "finite-feed:pending-linkedin-urls";
 const isGoogleAuthEnabled = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
 
 const numberFormatter = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
@@ -50,17 +49,8 @@ function GoogleMark() {
   return <svg className="google-mark" aria-hidden="true" viewBox="0 0 24 24"><path fill="#4285f4" d="M21.6 12.2c0-.7-.1-1.5-.2-2.2H12v4.3h5.4a4.7 4.7 0 0 1-2 3v2.8h3.5c2-1.9 3.2-4.6 3.2-7.9Z" /><path fill="#34a853" d="M12 22c2.9 0 5.3-1 7-2.6l-3.5-2.8c-1 .7-2.2 1-3.5 1-2.7 0-5-1.8-5.9-4.3H2.5v2.8A10 10 0 0 0 12 22Z" /><path fill="#fbbc05" d="M6.1 13.3A6 6 0 0 1 6 12c0-.5 0-.9.1-1.3V7.9H2.5A10 10 0 0 0 2 12c0 1.5.3 2.8.8 4.1l3.3-2.8Z" /><path fill="#ea4335" d="M12 6.4c1.6 0 3 .5 4.1 1.6l3.1-3A10 10 0 0 0 2.5 8l3.6 2.8A6 6 0 0 1 12 6.4Z" /></svg>;
 }
 
-function savePendingUrls(urls: string[]) {
-  window.localStorage.setItem(pendingUrlsKey, JSON.stringify(urls));
-}
-
-function pendingUrls(): string[] {
-  try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(pendingUrlsKey) ?? "[]");
-    return Array.isArray(value) ? value.filter((url): url is string => typeof url === "string") : [];
-  } catch {
-    return [];
-  }
+function FocusPreview() {
+  return <div className="focus-preview" aria-hidden="true"><header><span>Today’s signal</span><strong>3</strong></header><div className="preview-stack"><div className="preview-post muted"><span className="preview-avatar">A</span><div><strong>Someone you follow</strong><span>Shared a new perspective</span></div><time>18m</time></div><div className="preview-post active"><span className="preview-avatar">B</span><div><strong>Worth your attention</strong><span>Original post · 42 reactions</span></div><time>2h</time></div><div className="preview-post muted"><span className="preview-avatar">C</span><div><strong>From your inner circle</strong><span>Reposted with context</span></div><time>5h</time></div></div><footer><span>End of today’s feed</span><Icon name="check" /></footer></div>;
 }
 
 function Skeleton() {
@@ -121,24 +111,13 @@ function UrlEntry({ minimum = 1, initialValue = "", submitLabel = "Add people", 
 function AuthScreen() {
   const [mode, setMode] = useState<"signup" | "login">("signup");
   const [email, setEmail] = useState("");
-  const [urls, setUrls] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  function signupUrls(): string[] | null {
-    setError(null);
-    setMessage(null);
-    const parsed = parseLinkedInUrls(urls);
-    if (mode !== "signup") return [];
-    if (parsed.invalid.length > 0) { setError(`Check this entry: ${parsed.invalid[0]}`); return null; }
-    if (parsed.urls.length < 3) { setError("Start with at least three LinkedIn profile URLs."); return null; }
-    savePendingUrls(parsed.urls);
-    return parsed.urls;
-  }
   async function submitEmail(event: React.FormEvent) {
     event.preventDefault();
-    const parsed = signupUrls();
-    if (!parsed) return;
+    setError(null);
+    setMessage(null);
     setBusy(true);
     try {
       const { error: otpError } = await supabase.auth.signInWithOtp({
@@ -146,7 +125,6 @@ function AuthScreen() {
         options: {
           emailRedirectTo: window.location.origin,
           shouldCreateUser: mode === "signup",
-          ...(mode === "signup" ? { data: { linkedin_urls: parsed } } : {}),
         },
       });
       if (otpError) throw otpError;
@@ -154,8 +132,8 @@ function AuthScreen() {
     } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Could not continue."); } finally { setBusy(false); }
   }
   async function continueWithGoogle() {
-    const parsed = signupUrls();
-    if (!parsed) return;
+    setError(null);
+    setMessage(null);
     setBusy(true);
     try {
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
@@ -168,17 +146,13 @@ function AuthScreen() {
       setBusy(false);
     }
   }
-  return <main className="auth-page"><section className="auth-story"><Brand /><span className="auth-kicker">Signal over noise</span><h1>The people you care about.<br />Nothing else.</h1><p>A calm, private LinkedIn reader that remembers what you’ve seen and lets the rest disappear.</p><div className="focus-demo"><span /><span className="active" /><span /></div></section><section className="auth-card"><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{mode === "signup" && <label>Who do you want to follow?<textarea value={urls} onChange={(event) => setUrls(event.target.value)} rows={5} required placeholder="Paste at least 3 LinkedIn URLs, separated by commas" spellCheck={false} /><small>Start with three. You can add more anytime.</small></label>}{isGoogleAuthEnabled && <><button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div></>}<label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : "Email me a sign-in link"}</button><p className="passwordless-note">No password. The link signs you in securely.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></section></main>;
+  return <main className="auth-page"><section className="auth-story"><Brand /><div className="auth-thesis"><span className="auth-kicker">Your LinkedIn, edited</span><h1>Keep up with<br />the few who matter.</h1><p>A private daily reading list from the people you choose. Read it once, reach the end, get on with your day.</p></div><FocusPreview /></section><section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span>{mode === "signup" ? "Start your finite feed" : "Welcome back"}</span><p>{mode === "signup" ? "Create your account first. You’ll choose people next." : "We’ll email you a secure sign-in link."}</p></div><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{isGoogleAuthEnabled && <><button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div></>}<label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : "Continue with email"}</button><p className="passwordless-note">No password to remember.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></div></section></main>;
 }
 
-function Onboarding({ session }: { session: Session }) {
-  const metadataUrls = Array.isArray(session.user.user_metadata.linkedin_urls)
-    ? session.user.user_metadata.linkedin_urls.filter((url): url is string => typeof url === "string")
-    : [];
-  const saved = (metadataUrls.length > 0 ? metadataUrls : pendingUrls()).join(", ");
+function Onboarding() {
   const [complete, setComplete] = useState(false);
   if (complete) return <div className="centered-state"><Brand /><h1>Building your feed…</h1><p>Your first week of posts is being collected. Reloading shortly.</p></div>;
-  return <main className="onboarding-page"><Brand /><section className="onboarding-card"><span className="step-label">One quick step</span><h1>Choose your signal.</h1><p>Add at least three public LinkedIn profiles. We’ll collect their original posts and reposts—no LinkedIn login required.</p><UrlEntry minimum={3} initialValue={saved} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); window.localStorage.removeItem(pendingUrlsKey); setComplete(true); window.setTimeout(() => window.location.reload(), 4_000); }} /></section></main>;
+  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol></header><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn profiles. Finite Feed collects their original posts and reposts without needing your LinkedIn login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); window.setTimeout(() => window.location.reload(), 4_000); }} /></div></section></main>;
 }
 
 function FeedApp() {
@@ -206,11 +180,11 @@ function FeedApp() {
   return <div className="app-shell"><header className="topbar"><button className="brand-button" onClick={() => setView("today")}><Brand compact /></button><nav aria-label="Feed sections">{(["today", "people", "history"] as const).map((item) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{item}</button>)}</nav><button className="refresh-button" disabled={busy || isRefreshing} onClick={() => void refresh()}><Icon name="refresh" /><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button></header><main id="top"><section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? sortedFeed.length : view === "people" ? data?.profiles.length ?? 0 : data?.history.length ?? 0}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : "saved links"}</span></div></section>{(message || actionError) && <div className={`notice ${actionError ? "error" : "success"}`} role={actionError ? "alert" : "status"}><span>{actionError ?? message}</span><button aria-label="Dismiss message" onClick={() => { setMessage(null); setActionError(null); }}><Icon name="close" /></button></div>}{view === "today" && <section className="feed" aria-label="Unread LinkedIn posts">{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<div className="end-note"><span>End of your finite feed</span></div></> : <section className="empty-state"><span className="empty-kicker">All caught up</span><h2>Nothing new to read.</h2><p>Refresh when you want to check for new posts.</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Refresh now</button></section>}</section>}{view === "people" && <section className="people-view"><UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added.`); await reload(); }} />{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}{view === "history" && <section className="history-view"><p className="history-intro">Only the link, person, and date remain in your personal history.</p>{data?.history.length ? <ol className="history-list">{data.history.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on LinkedIn`}><Icon name="arrow" /></a></li>)}</ol> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Read links will collect here.</h2></section>}</section>}</main><footer className="site-footer"><span>Signal over noise.</span><span>Finite Feed</span></footer></div>;
 }
 
-function AuthenticatedApp({ session }: { session: Session }) {
+function AuthenticatedApp() {
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
-  useEffect(() => { void getBootstrap().then((data) => { const needsSetup = data.profiles.length < 3; if (!needsSetup) window.localStorage.removeItem(pendingUrlsKey); setNeedsOnboarding(needsSetup); }).catch(() => setNeedsOnboarding(true)); }, []);
+  useEffect(() => { void getBootstrap().then((data) => setNeedsOnboarding(data.profiles.length < 3)).catch(() => setNeedsOnboarding(true)); }, []);
   if (needsOnboarding === null) return <div className="centered-state"><Brand /><p>Loading your feed…</p></div>;
-  return needsOnboarding ? <Onboarding session={session} /> : <FeedApp />;
+  return needsOnboarding ? <Onboarding /> : <FeedApp />;
 }
 
 function App() {
@@ -219,7 +193,7 @@ function App() {
   if (!isSupabaseConfigured) return <div className="centered-state"><Brand /><h1>Connect Supabase to begin.</h1><p>Copy <code>.env.example</code> to <code>.env.local</code> and add your project values.</p></div>;
   if (session === undefined) return <div className="centered-state"><Brand /><p>Loading your feed…</p></div>;
   if (!session) return <AuthScreen />;
-  return <AuthenticatedApp session={session} />;
+  return <AuthenticatedApp />;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
