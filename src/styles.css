@@ -100,6 +100,10 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .feed-card::before { position: absolute; z-index: 1; top: 1.25rem; bottom: 1.25rem; left: 0; width: 2px; background: var(--accent); content: ""; opacity: 0; transition: opacity 140ms ease-out; }
 .feed-card:hover::before { opacity: 1; }
 .card-body { min-width: 0; }
+.repost-context { display: flex; align-items: center; gap: 0.45rem; min-width: 0; padding: 0.62rem 1rem; border-bottom: 1px solid #d8e0ec; background: #f4f7fb; color: #53647d; font-size: 0.68rem; line-height: 1.35; }
+.repost-context svg { width: 0.86rem; height: 0.86rem; color: var(--accent); }
+.repost-context span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repost-context strong { color: var(--ink); font-weight: 750; }
 .avatar { display: grid; width: 3rem; height: 3rem; flex: 0 0 auto; overflow: hidden; place-items: center; border: 1px solid #d4ddea; border-radius: 50%; background: var(--accent-soft); color: var(--accent-dark); font-family: "Avenir Next Condensed", "Arial Narrow", sans-serif; font-size: 0.82rem; font-weight: 750; text-decoration: none; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .card-header { display: flex; justify-content: space-between; align-items: start; min-width: 0; gap: 1rem; }
@@ -110,7 +114,6 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .person-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .profile-headline { display: block; max-width: 56ch; overflow: hidden; margin-top: 0.08rem; color: var(--muted); font-size: 0.72rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .post-meta { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.14rem; color: var(--muted); font-size: 0.68rem; }
-.post-kind { color: var(--muted); font-weight: 650; text-transform: capitalize; }
 .seen-mark { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--accent); font-size: 0.66rem; font-weight: 750; animation: settle 150ms ease-out both; }
 .seen-mark svg { width: 0.85rem; height: 0.85rem; }
 .post-copy { margin: 0; padding: 0.85rem 1rem 1rem; max-width: 68ch; font-size: 0.9rem; line-height: 1.48; text-wrap: pretty; white-space: pre-line; }
