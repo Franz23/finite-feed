@@ -44,6 +44,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (error) throw error;
     return response.status(202).json({ accepted: true, posts: count });
   } catch (error) {
+    console.error("Apify webhook failed:", error instanceof Error ? error.message : "Unknown error");
     return apiError(response, error);
   }
 }

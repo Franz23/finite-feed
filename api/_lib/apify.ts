@@ -198,7 +198,8 @@ export async function ingestDataset(datasetId: string): Promise<number> {
   if (!response.ok) throw new Error(`Could not fetch Apify dataset (${response.status}).`);
   const payload: unknown = await response.json();
   if (!Array.isArray(payload)) throw new Error("Apify returned an unexpected dataset shape.");
-  const normalized = payload.map((item) => normalizeActorPost(item, profiles)).filter((post): post is ActorPost => post !== null);
+  const candidates = payload.map((item) => normalizeActorPost(item, profiles)).filter((post): post is ActorPost => post !== null);
+  const normalized = [...new Map(candidates.map((post) => [post.id, post])).values()];
   if (normalized.length === 0) return 0;
   const now = new Date().toISOString();
   const { error: postsError } = await db.from("posts").upsert(normalized.map((post) => ({

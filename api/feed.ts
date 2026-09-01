@@ -126,12 +126,22 @@ export default async function handler(request: VercelRequest, response: VercelRe
       .order("started_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const refresh: RefreshStatus = latestRefresh ? {
+    let refresh: RefreshStatus = latestRefresh ? {
       status: latestRefresh.status,
       startedAt: latestRefresh.started_at,
       finishedAt: latestRefresh.finished_at,
       error: latestRefresh.error,
     } : { status: "idle", startedAt: null, finishedAt: null, error: null };
+    if (
+      (refresh.status === "starting" || refresh.status === "running") &&
+      refresh.startedAt &&
+      Date.parse(refresh.startedAt) < Date.now() - 10 * 60_000
+    ) {
+      const finishedAt = new Date().toISOString();
+      const error = "The refresh took too long to finish. Try it again.";
+      await db.from("refresh_runs").update({ status: "failed", finished_at: finishedAt, error }).eq("started_at", refresh.startedAt);
+      refresh = { ...refresh, status: "failed", finishedAt, error };
+    }
 
     return response.status(200).json({ feed, profiles, history, refresh } satisfies Bootstrap);
   } catch (error) {
