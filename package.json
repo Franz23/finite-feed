@@ -1,37 +1,35 @@
 {
-  "name": "linkedin-fieldnotes",
+  "name": "focused-feed",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:full": "vercel dev",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit && eslint .",
-    "test": "vitest run --config vitest.config.ts",
-    "types": "wrangler types",
-    "db:migrate": "wrangler d1 migrations apply linkedin-fieldnotes-db --local",
-    "deploy:dry": "wrangler deploy --dry-run"
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
     "@vitejs/plugin-react": "latest",
     "react": "latest",
     "react-dom": "latest"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "latest",
-    "@cloudflare/workers-types": "latest",
     "@eslint/js": "^9.39.1",
+    "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "@types/node": "latest",
+    "@vercel/node": "^10.0.0",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",
     "globals": "latest",
     "typescript": "^5.9.3",
     "typescript-eslint": "latest",
+    "vercel": "^59.10.0",
     "vite": "latest",
-    "vitest": "latest",
-    "wrangler": "latest"
+    "vitest": "latest"
   }
 }

@@ -3,6 +3,8 @@ export type FeedPost = {
   profileId: string;
   profileName: string;
   profileUrl: string;
+  profileHeadline: string | null;
+  profileAvatarUrl: string | null;
   linkedinUrl: string;
   content: string;
   kind: "original" | "repost" | "quote";
@@ -10,6 +12,24 @@ export type FeedPost = {
   likes: number;
   comments: number;
   reposts: number;
+  media: PostMedia | null;
+};
+
+export type PostImage = {
+  url: string;
+  width: number | null;
+  height: number | null;
+};
+
+export type PostMedia = {
+  images: PostImage[];
+  video: { url: string; thumbnailUrl: string | null } | null;
+  document: {
+    title: string | null;
+    url: string | null;
+    coverUrl: string | null;
+    pageCount: number | null;
+  } | null;
 };
 
 export type Profile = {
@@ -28,7 +48,7 @@ export type HistoryItem = {
 };
 
 export type RefreshStatus = {
-  status: "idle" | "starting" | "running" | "succeeded" | "partial" | "failed";
+  status: "idle" | "starting" | "running" | "succeeded" | "failed";
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
@@ -39,12 +59,9 @@ export type Bootstrap = {
   profiles: Profile[];
   history: HistoryItem[];
   refresh: RefreshStatus;
-  apifyConfigured: boolean;
-  demoMode: boolean;
 };
 
-export type ImportResult = {
-  imported: number;
-  deactivated: number;
-  errors: Array<{ row: number; message: string }>;
+export type FollowResult = {
+  added: number;
+  total: number;
 };

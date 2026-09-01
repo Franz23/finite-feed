@@ -18,7 +18,20 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": "off",
+      "react-hooks/set-state-in-effect": "off",
       "@typescript-eslint/no-floating-promises": "error",
+    },
+  },
+  {
+    // Supabase responses remain `any` until an owner links a project and generates
+    // its schema types. API handlers still validate all untrusted request bodies.
+    files: ["api/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
     },
   },
 );

@@ -1,3 +1,0 @@
-# Copy to .dev.vars for local Apify integration.
-APIFY_API_TOKEN=
-APIFY_WEBHOOK_SECRET=
