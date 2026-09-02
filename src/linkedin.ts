@@ -1,4 +1,4 @@
-import { canonicalSocialProfileUrl, parseSocialUrls } from "./social";
+import { canonicalSocialProfileUrl, parseSocialUrls } from "./social.js";
 
 export function canonicalLinkedInProfileUrl(value: string): string | null {
   const result = canonicalSocialProfileUrl(value);

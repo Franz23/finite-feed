@@ -246,6 +246,12 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 
 .onboarding-page { width: min(100% - 3rem, 1120px); min-height: 100dvh; margin: 0 auto; padding: clamp(1.5rem, 4vw, 3rem) 0 5rem; }
 .onboarding-header { display: flex; justify-content: space-between; align-items: center; gap: 2rem; }
+.onboarding-account { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 0.85rem; color: var(--muted); font-size: 0.7rem; }
+.onboarding-account span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding-account strong { color: var(--ink); font-weight: 650; }
+.onboarding-account button { flex: none; border: 0; padding: 0.45rem 0; background: transparent; color: var(--accent); font: inherit; font-weight: 750; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.onboarding-page > .setup-progress { justify-content: flex-end; margin-top: 1.2rem; }
+.account-load-error p { max-width: 34rem; }
 .setup-progress { display: flex; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; }
 .setup-progress li { display: flex; align-items: center; color: #96a0af; font-size: 0.66rem; font-weight: 700; }
 .setup-progress li:not(:last-child)::after { width: clamp(1.5rem, 4vw, 3.5rem); height: 1px; margin: 0 0.7rem; background: var(--hairline); content: ""; }

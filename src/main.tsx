@@ -170,7 +170,7 @@ function UrlEntry({ minimum = 1, initialValue = "", submitLabel = "Add people", 
 }
 
 function AuthScreen() {
-  const [mode, setMode] = useState<"signup" | "login">("signup");
+  const [mode, setMode] = useState<"signup" | "login">("login");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -207,10 +207,10 @@ function AuthScreen() {
       setBusy(false);
     }
   }
-  return <main className="auth-page"><section className="auth-story"><Brand /><div className="auth-thesis"><span className="auth-kicker">Your social feed, edited</span><h1>Keep up with<br />the few who matter.</h1><p>A private daily reading list from the people you choose. Read it once, reach the end, get on with your day.</p></div><FocusPreview /></section><section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span>{mode === "signup" ? "Start your finite feed" : "Welcome back"}</span><p>{mode === "signup" ? "Create your account first. You’ll choose people next." : "We’ll email you a secure sign-in link."}</p></div><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{isGoogleAuthEnabled && <><button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div></>}<label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : "Continue with email"}</button><p className="passwordless-note">No password to remember.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></div></section></main>;
+  return <main className="auth-page"><section className="auth-story"><Brand /><div className="auth-thesis"><span className="auth-kicker">LinkedIn + X, in one place</span><h1>Build a social feed with only the people you care about.</h1><p>Add people from LinkedIn and X. See their posts in one place, without ads or algorithmic noise.</p></div><FocusPreview /></section><section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span>{mode === "signup" ? "Create your account" : "Sign in to Finite Feed"}</span><p>{mode === "signup" ? "Sign up first, then choose the people you want to follow." : "We’ll email you a secure sign-in link."}</p></div><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{isGoogleAuthEnabled && <><button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div></>}<label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : mode === "signup" ? "Create account" : "Send sign-in link"}</button><p className="passwordless-note">No password to remember.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></div></section></main>;
 }
 
-function Onboarding() {
+function Onboarding({ email }: { email: string }) {
   const [complete, setComplete] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [pollCycle, setPollCycle] = useState(0);
@@ -239,7 +239,7 @@ function Onboarding() {
     return () => { stopped = true; if (timeout) window.clearTimeout(timeout); };
   }, [complete, pollCycle]);
   if (complete) return <div className="centered-state building-state"><Brand /><span className="building-pulse" aria-hidden="true" /><h1>{buildError ? "The refresh paused." : "Building your feed…"}</h1><p>{buildError ?? "Checking the past week for posts. This usually takes less than a minute."}</p>{buildError && <button className="primary-button" type="button" onClick={() => { setBuildError(null); void startRefresh().then(() => setPollCycle((current) => current + 1)).catch((error: unknown) => setBuildError(error instanceof Error ? error.message : "Could not retry the refresh.")); }}><Icon name="refresh" />Retry refresh</button>}</div>;
-  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol></header><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn or X profiles. Finite Feed collects their original posts and reposts without needing either account login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); }} /></div></section><ClaudeSelectionGuide /></main>;
+  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><div className="onboarding-account"><span>Signed in as <strong>{email}</strong></span><button type="button" onClick={() => void supabase.auth.signOut()}>Use another account</button></div></header><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn or X profiles. Finite Feed collects their original posts and reposts without needing either account login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); }} /></div></section><ClaudeSelectionGuide /></main>;
 }
 
 function FeedApp() {
@@ -303,11 +303,20 @@ function FeedApp() {
   </div>;
 }
 
-function AuthenticatedApp() {
+function AuthenticatedApp({ session }: { session: Session }) {
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
-  useEffect(() => { void getBootstrap().then((data) => setNeedsOnboarding(data.profiles.length < 3)).catch(() => setNeedsOnboarding(true)); }, []);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadAccount = useCallback(() => {
+    setNeedsOnboarding(null);
+    setLoadError(null);
+    void getBootstrap().then((data) => setNeedsOnboarding(data.profiles.length < 3)).catch((error: unknown) => {
+      setLoadError(error instanceof Error ? error.message : "Could not load your account.");
+    });
+  }, []);
+  useEffect(() => { loadAccount(); }, [loadAccount]);
+  if (loadError) return <div className="centered-state account-load-error"><Brand /><h1>We couldn’t load your account.</h1><p>{loadError}</p><div className="empty-actions"><button className="primary-button" type="button" onClick={loadAccount}>Try again</button><button className="text-button" type="button" onClick={() => void supabase.auth.signOut()}>Sign in with another account</button></div></div>;
   if (needsOnboarding === null) return <div className="centered-state"><Brand /><p>Loading your feed…</p></div>;
-  return needsOnboarding ? <Onboarding /> : <FeedApp />;
+  return needsOnboarding ? <Onboarding email={session.user.email ?? "your account"} /> : <FeedApp />;
 }
 
 function App() {
@@ -316,7 +325,7 @@ function App() {
   if (!isSupabaseConfigured) return <div className="centered-state"><Brand /><h1>Connect Supabase to begin.</h1><p>Copy <code>.env.example</code> to <code>.env.local</code> and add your project values.</p></div>;
   if (session === undefined) return <div className="centered-state"><Brand /><p>Loading your feed…</p></div>;
   if (!session) return <AuthScreen />;
-  return <AuthenticatedApp />;
+  return <AuthenticatedApp session={session} />;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

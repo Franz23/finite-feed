@@ -2,7 +2,14 @@ import { supabase } from "./supabase";
 import type { Bootstrap, FollowResult } from "./types";
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const payload: unknown = await response.json();
+  const body = await response.text();
+  let payload: unknown;
+  try {
+    payload = body ? JSON.parse(body) : null;
+  } catch {
+    if (!response.ok) throw new Error(`The server could not complete that request (${response.status}). Please try again.`);
+    throw new Error("The server returned an unexpected response.");
+  }
   if (!response.ok) {
     const message =
       typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "string"
