@@ -12,6 +12,16 @@ type SortMode = "recent" | "balanced" | "engaged";
 const isGoogleAuthEnabled = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
 
 const numberFormatter = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const closingQuotes = [
+  { text: "There is only one moment where you can be alive, that is the present moment.", author: "Thich Nhat Hanh" },
+  { text: "Muddy water is best cleared by leaving it alone.", author: "Alan Watts" },
+  { text: "Life is like riding a bicycle. To keep your balance, you must keep moving.", author: "Albert Einstein" },
+  { text: "Attention is the beginning of devotion.", author: "Mary Oliver" },
+  { text: "While we are postponing, life speeds by.", author: "Seneca" },
+  { text: "The art of being wise is the art of knowing what to overlook.", author: "William James" },
+  { text: "Nature does not hurry, yet everything is accomplished.", author: "Lao Tzu" },
+  { text: "How we spend our days is, of course, how we spend our lives.", author: "Annie Dillard" },
+] as const;
 const claudeSelectionPrompt = `I want to create a focused LinkedIn reading list, not import my entire network.
 
 Analyze the LinkedIn data export I attach. Start by asking what people, topics, industries, or relationships I want to stay current with.
@@ -71,6 +81,31 @@ function Icon({ name }: { name: "heart" | "comment" | "repost" | "arrow" | "refr
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return <span className={`brand ${compact ? "compact" : ""}`}><img src="/finite-feed-mark.svg" alt="" /><span>Finite Feed</span></span>;
+}
+
+function DailyQuote() {
+  const [quote] = useState(() => {
+    const day = Math.floor(Date.now() / 86_400_000);
+    return closingQuotes[day % closingQuotes.length];
+  });
+  return <blockquote className="daily-quote"><p>“{quote.text}”</p><cite>— {quote.author}</cite></blockquote>;
+}
+
+function FeedEnd({ remainingIds, onSeen }: { remainingIds: string[]; onSeen: (ids: string[]) => void }) {
+  const endRef = useRef<HTMLDivElement>(null);
+  const closed = useRef(false);
+  useEffect(() => {
+    const element = endRef.current;
+    if (!element || remainingIds.length === 0 || closed.current) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting || closed.current) return;
+      closed.current = true;
+      onSeen(remainingIds);
+    }, { threshold: 0.6 });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onSeen, remainingIds]);
+  return <div className="feed-end" ref={endRef}>{remainingIds.length === 0 ? <><span className="end-complete"><Icon name="check" />You’re all caught up</span><DailyQuote /></> : <div className="end-note"><span>End of your finite feed</span></div>}</div>;
 }
 
 function GoogleMark() {
@@ -298,7 +333,9 @@ function FeedApp() {
   }, [data?.history, historyQuery]);
   const recentHistory = filteredHistory.filter((item) => item.display === "full");
   const olderHistory = filteredHistory.filter((item) => item.display === "link");
-  const handleSeen = useCallback((id: string) => { setSessionSeen((current) => new Set(current).add(id)); void markSeen([id]).catch((error: unknown) => { setSessionSeen((current) => { const next = new Set(current); next.delete(id); return next; }); setActionError(error instanceof Error ? error.message : "Could not remember that post."); }); }, []);
+  const handleSeenMany = useCallback((ids: string[]) => { if (ids.length === 0) return; setSessionSeen((current) => { const next = new Set(current); ids.forEach((id) => next.add(id)); return next; }); void markSeen(ids).catch((error: unknown) => { setSessionSeen((current) => { const next = new Set(current); ids.forEach((id) => next.delete(id)); return next; }); setActionError(error instanceof Error ? error.message : "Could not remember those posts."); }); }, []);
+  const handleSeen = useCallback((id: string) => handleSeenMany([id]), [handleSeenMany]);
+  const unreadFeed = sortedFeed.filter((post) => !sessionSeen.has(post.id));
   async function refresh() { setBusy(true); setActionError(null); try { await startRefresh(true); setMessage("Refresh started. New posts will appear here shortly."); await reload(); } catch (error) { setActionError(error instanceof Error ? error.message : "Refresh could not start."); } finally { setBusy(false); } }
   const today = new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
   const isRefreshing = data?.refresh.status === "running" || data?.refresh.status === "starting";
@@ -310,10 +347,10 @@ function FeedApp() {
       <button className="refresh-button" disabled={busy || isRefreshing} onClick={() => void refresh()}><Icon name="refresh" /><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button>
     </header>
     <main id="top">
-      <section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? sortedFeed.length : view === "people" ? data?.profiles.length ?? 0 : filteredHistory.length}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : historyQuery ? "matching posts" : "read posts"}</span></div></section>
+      <section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? unreadFeed.length : view === "people" ? data?.profiles.length ?? 0 : filteredHistory.length}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : historyQuery ? "matching posts" : "read posts"}</span></div></section>
       {(message || actionError) && <div className={`notice ${actionError ? "error" : "success"}`} role={actionError ? "alert" : "status"}><span>{actionError ?? message}</span><button aria-label="Dismiss message" onClick={() => { setMessage(null); setActionError(null); }}><Icon name="close" /></button></div>}
       {refreshFailed && (view !== "today" || sortedFeed.length > 0) && <div className="refresh-failure" role="alert"><div><strong>Refresh failed.</strong><span>{data?.refresh.error ?? "The latest check did not finish."}</span></div><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry</button></div>}
-      {view === "today" && <section className="feed" aria-label="Unread social posts">{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact={sortedFeed.length > 0} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="balanced">Balanced by person</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<div className="end-note"><span>End of your finite feed</span></div></> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state"><span className="empty-kicker">All caught up</span><h2>Nothing new to read.</h2><p>Your recently read posts stay in History for 48 hours.</p><button className="primary-button" type="button" onClick={() => setView("history")}>View recent history</button></section>}</section>}
+      {view === "today" && <section className="feed" aria-label="Unread social posts">{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact={sortedFeed.length > 0} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{unreadFeed.length === 0 ? "Reading complete" : sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="balanced">Balanced by person</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<FeedEnd remainingIds={unreadFeed.map((post) => post.id)} onSeen={handleSeenMany} /></> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state mindful-empty"><span className="empty-kicker">All caught up</span><h2>You’re up to date.</h2><DailyQuote /><button className="text-button" type="button" onClick={() => setView("history")}>View recent history</button></section>}</section>}
       {view === "people" && <section className="people-view"><UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); const status = await startRefresh(); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added${status === "fresh" ? "." : " — checking for posts now."}`); await reload(); }} />{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact />}{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : isRefreshing ? "Checking now" : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}
       {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person, post, or URL" /></div><p className="history-intro">Full posts stay readable here for 48 hours. After that, Finite Feed keeps only the reference link.</p>{recentHistory.length > 0 && <section className="history-feed" aria-label="Posts read in the last 48 hours"><div className="history-section-label"><strong>Last 48 hours</strong><span>{recentHistory.length} {recentHistory.length === 1 ? "post" : "posts"}</span></div>{recentHistory.map((item) => <FeedCard key={item.id} post={item} archived />)}</section>}{olderHistory.length > 0 && <section className="older-history"><div className="history-section-label"><strong>Older links</strong><span>Reference only</span></div><ol className="history-list">{olderHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on ${item.platform === "x" ? "X" : "LinkedIn"}`}><Icon name="arrow" /></a></li>)}</ol></section>}{filteredHistory.length === 0 && (historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person, phrase, or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Posts will stay here after you read them.</h2></section>)}</section>}
     </main>

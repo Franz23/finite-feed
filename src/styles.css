@@ -142,6 +142,14 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .open-link svg { width: 0.86rem; height: 0.86rem; }
 .end-note { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1rem; padding: 2rem 0; color: var(--muted); font-size: 0.68rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
 .end-note::before, .end-note::after { content: ""; height: 1px; background: var(--hairline); }
+.feed-end { min-height: 7rem; padding: 0.25rem 0 1rem; }
+.end-complete { display: flex; align-items: center; justify-content: center; gap: 0.4rem; margin: 1.5rem 0 0.8rem; color: var(--accent); font-size: 0.66rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.end-complete svg { width: 0.9rem; height: 0.9rem; }
+.daily-quote { max-width: 34rem; margin: 0 auto; padding: 1.6rem 1.25rem; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); text-align: center; }
+.daily-quote p { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: clamp(1.15rem, 4vw, 1.5rem); line-height: 1.45; text-wrap: balance; }
+.daily-quote cite { display: block; margin-top: 0.75rem; color: var(--muted); font-size: 0.7rem; font-style: normal; }
+.mindful-empty .daily-quote { margin: 1.5rem auto; padding-inline: 0; }
+.mindful-empty > .text-button { display: inline-block; }
 
 .empty-state { margin: 1.5rem 0 0; padding: clamp(3.5rem, 11vw, 6.5rem) clamp(1.25rem, 6vw, 3rem); border: 1px solid var(--hairline); background: var(--surface); text-align: center; }
 .empty-state p { max-width: 34rem; margin: 1rem auto 1.6rem; color: var(--muted); line-height: 1.65; text-wrap: pretty; }
