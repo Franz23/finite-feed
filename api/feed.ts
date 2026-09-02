@@ -158,17 +158,24 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     const { data: historyReads, error: historyError } = await db
       .from("post_reads")
-      .select("seen_at, posts!inner(id, linkedin_url, published_at, platform, profiles!inner(name))")
+      .select("seen_at, posts!inner(id, profile_id, linkedin_url, content, post_kind, published_at, likes, comments, reposts, media, platform, profiles!inner(id, name, linkedin_url, headline, avatar_url))")
       .eq("user_id", user.id)
       .order("seen_at", { ascending: false })
       .limit(1000);
     if (historyError) throw historyError;
     type HistoryPostRow = {
       id: string;
+      profile_id: string;
       linkedin_url: string;
+      content: string | null;
+      post_kind: FeedPost["kind"];
       published_at: string;
+      likes: number;
+      comments: number;
+      reposts: number;
+      media: FeedPost["media"];
       platform: "linkedin" | "x";
-      profiles: { name: string | null } | Array<{ name: string | null }>;
+      profiles: Pick<ProfileRow, "id" | "name" | "linkedin_url" | "headline" | "avatar_url"> | Array<Pick<ProfileRow, "id" | "name" | "linkedin_url" | "headline" | "avatar_url">>;
     };
     const history: HistoryItem[] = (historyReads ?? []).flatMap((read: { seen_at: string; posts: unknown }) => {
       const rawPost = read.posts as HistoryPostRow | HistoryPostRow[];
@@ -176,15 +183,27 @@ export default async function handler(request: VercelRequest, response: VercelRe
       if (!post) return [];
       const rawProfile = post.profiles;
       const profile = Array.isArray(rawProfile) ? rawProfile[0] : rawProfile;
+      const display: HistoryItem["display"] = Date.parse(read.seen_at) >= Date.now() - 48 * 60 * 60_000 ? "full" : "link";
       return [{
         id: post.id,
-        profileName: profile?.name || "LinkedIn member",
+        profileId: post.profile_id,
+        profileName: profile?.name || profile?.linkedin_url.split("/").filter(Boolean).at(-1) || "Social profile",
+        profileUrl: profile?.linkedin_url ?? post.linkedin_url,
+        profileHeadline: profile?.headline ?? null,
+        profileAvatarUrl: profile?.avatar_url ?? null,
         linkedinUrl: post.linkedin_url,
         platform: post.platform,
+        content: post.content || `Open this post on ${post.platform === "x" ? "X" : "LinkedIn"} to read it.`,
+        kind: post.post_kind,
         publishedAt: post.published_at,
+        likes: post.likes,
+        comments: post.comments,
+        reposts: post.reposts,
+        media: post.media,
         seenAt: read.seen_at,
+        display,
       }];
-    });
+    }).sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
 
     return response.status(200).json({ feed, profiles, history, refresh } satisfies Bootstrap);
   } catch (error) {

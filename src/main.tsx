@@ -8,7 +8,7 @@ import type { Bootstrap, FeedPost, RefreshStatus } from "./types";
 import "./styles.css";
 
 type View = "today" | "people" | "history";
-type SortMode = "recent" | "engaged";
+type SortMode = "recent" | "balanced" | "engaged";
 const isGoogleAuthEnabled = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
 
 const numberFormatter = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
@@ -39,6 +39,20 @@ function formatRelativeDate(value: string): string {
 
 function initials(name: string): string {
   return name.split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+}
+
+function balanceByAuthor(posts: FeedPost[]): FeedPost[] {
+  const remaining = [...posts].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+  const balanced: FeedPost[] = [];
+  while (remaining.length > 0) {
+    const lastTwo = balanced.slice(-2);
+    const repeatedAuthor = lastTwo.length === 2 && lastTwo.every((post) => post.profileId === remaining[0]?.profileId);
+    const alternateIndex = repeatedAuthor
+      ? remaining.slice(0, 8).findIndex((post) => post.profileId !== remaining[0]?.profileId)
+      : -1;
+    balanced.push(remaining.splice(alternateIndex > 0 ? alternateIndex : 0, 1)[0]);
+  }
+  return balanced;
 }
 
 function Icon({ name }: { name: "heart" | "comment" | "repost" | "arrow" | "refresh" | "check" | "plus" | "close" }) {
@@ -117,15 +131,16 @@ function PostAttachment({ post }: { post: FeedPost }) {
   return null;
 }
 
-function FeedCard({ post, onSeen }: { post: FeedPost; onSeen: (id: string) => void }) {
+function FeedCard({ post, onSeen, archived = false }: { post: FeedPost; onSeen?: (id: string) => void; archived?: boolean }) {
   const cardRef = useRef<HTMLElement>(null);
   const wasVisible = useRef(false);
   const marked = useRef(false);
-  const [seen, setSeen] = useState(false);
+  const [seen, setSeen] = useState(archived);
   const [expanded, setExpanded] = useState(false);
   const isLong = post.content.length > 680 || post.content.split("\n").length > 10;
   const platformName = post.platform === "x" ? "X" : "LinkedIn";
   useEffect(() => {
+    if (archived || !onSeen) return;
     const element = cardRef.current;
     if (!element) return;
     const observer = new IntersectionObserver((entries) => {
@@ -140,7 +155,7 @@ function FeedCard({ post, onSeen }: { post: FeedPost; onSeen: (id: string) => vo
     }, { threshold: [0, 0.5], rootMargin: "-76px 0px 0px 0px" });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [onSeen, post.id]);
+  }, [archived, onSeen, post.id]);
   return <article className="feed-card" ref={cardRef} data-seen={seen ? "true" : "false"} data-kind={post.kind}>
     <div className="card-body">
       <header className="card-header"><div className="card-identity"><a className="avatar" href={post.profileUrl} target="_blank" rel="noreferrer" aria-label={`Open ${post.profileName}'s ${platformName} profile`}>{post.profileAvatarUrl ? <img src={post.profileAvatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(post.profileName)}</span>}</a><div className="identity-copy"><span className="identity-line"><a className="person-name" href={post.profileUrl} target="_blank" rel="noreferrer">{post.profileName}</a><span className={`platform-mark ${post.platform}`}>{platformName}</span></span>{post.profileHeadline && <span className="profile-headline">{post.profileHeadline}</span>}<span className="post-meta"><time dateTime={post.publishedAt}>{formatRelativeDate(post.publishedAt)}</time></span></div></div>{seen && <span className="seen-mark"><Icon name="check" /> Read</span>}</header>
@@ -270,6 +285,7 @@ function FeedApp() {
   const sortedFeed = useMemo(() => {
     const posts = [...(data?.feed ?? [])];
     if (sort === "recent") return posts.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+    if (sort === "balanced") return balanceByAuthor(posts);
     const score = (post: FeedPost) => post.likes + post.comments * 4 + post.reposts * 2;
     return posts.sort((a, b) => score(b) - score(a) || Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
   }, [data?.feed, sort]);
@@ -277,9 +293,11 @@ function FeedApp() {
     const query = historyQuery.trim().toLowerCase();
     if (!query) return data?.history ?? [];
     return (data?.history ?? []).filter((item) =>
-      item.profileName.toLowerCase().includes(query) || item.linkedinUrl.toLowerCase().includes(query),
+      item.profileName.toLowerCase().includes(query) || item.linkedinUrl.toLowerCase().includes(query) || item.content.toLowerCase().includes(query),
     );
   }, [data?.history, historyQuery]);
+  const recentHistory = filteredHistory.filter((item) => item.display === "full");
+  const olderHistory = filteredHistory.filter((item) => item.display === "link");
   const handleSeen = useCallback((id: string) => { setSessionSeen((current) => new Set(current).add(id)); void markSeen([id]).catch((error: unknown) => { setSessionSeen((current) => { const next = new Set(current); next.delete(id); return next; }); setActionError(error instanceof Error ? error.message : "Could not remember that post."); }); }, []);
   async function refresh() { setBusy(true); setActionError(null); try { await startRefresh(true); setMessage("Refresh started. New posts will appear here shortly."); await reload(); } catch (error) { setActionError(error instanceof Error ? error.message : "Refresh could not start."); } finally { setBusy(false); } }
   const today = new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
@@ -292,12 +310,12 @@ function FeedApp() {
       <button className="refresh-button" disabled={busy || isRefreshing} onClick={() => void refresh()}><Icon name="refresh" /><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button>
     </header>
     <main id="top">
-      <section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? sortedFeed.length : view === "people" ? data?.profiles.length ?? 0 : filteredHistory.length}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : historyQuery ? "matching links" : "saved links"}</span></div></section>
+      <section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? sortedFeed.length : view === "people" ? data?.profiles.length ?? 0 : filteredHistory.length}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : historyQuery ? "matching posts" : "read posts"}</span></div></section>
       {(message || actionError) && <div className={`notice ${actionError ? "error" : "success"}`} role={actionError ? "alert" : "status"}><span>{actionError ?? message}</span><button aria-label="Dismiss message" onClick={() => { setMessage(null); setActionError(null); }}><Icon name="close" /></button></div>}
       {refreshFailed && (view !== "today" || sortedFeed.length > 0) && <div className="refresh-failure" role="alert"><div><strong>Refresh failed.</strong><span>{data?.refresh.error ?? "The latest check did not finish."}</span></div><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry</button></div>}
-      {view === "today" && <section className="feed" aria-label="Unread LinkedIn posts">{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact={sortedFeed.length > 0} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<div className="end-note"><span>End of your finite feed</span></div></> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state"><span className="empty-kicker">All caught up</span><h2>Nothing new to read.</h2><p>Refresh when you want to check for new posts.</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Refresh now</button></section>}</section>}
+      {view === "today" && <section className="feed" aria-label="Unread social posts">{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact={sortedFeed.length > 0} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="balanced">Balanced by person</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<div className="end-note"><span>End of your finite feed</span></div></> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state"><span className="empty-kicker">All caught up</span><h2>Nothing new to read.</h2><p>Your recently read posts stay in History for 48 hours.</p><button className="primary-button" type="button" onClick={() => setView("history")}>View recent history</button></section>}</section>}
       {view === "people" && <section className="people-view"><UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); const status = await startRefresh(); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added${status === "fresh" ? "." : " — checking for posts now."}`); await reload(); }} />{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact />}{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : isRefreshing ? "Checking now" : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}
-      {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person or LinkedIn URL" /></div><p className="history-intro">Only the link, person, and date remain in your personal history.</p>{filteredHistory.length > 0 ? <ol className="history-list">{filteredHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on LinkedIn`}><Icon name="arrow" /></a></li>)}</ol> : historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Read links will collect here.</h2></section>}</section>}
+      {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person, post, or URL" /></div><p className="history-intro">Full posts stay readable here for 48 hours. After that, Finite Feed keeps only the reference link.</p>{recentHistory.length > 0 && <section className="history-feed" aria-label="Posts read in the last 48 hours"><div className="history-section-label"><strong>Last 48 hours</strong><span>{recentHistory.length} {recentHistory.length === 1 ? "post" : "posts"}</span></div>{recentHistory.map((item) => <FeedCard key={item.id} post={item} archived />)}</section>}{olderHistory.length > 0 && <section className="older-history"><div className="history-section-label"><strong>Older links</strong><span>Reference only</span></div><ol className="history-list">{olderHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on ${item.platform === "x" ? "X" : "LinkedIn"}`}><Icon name="arrow" /></a></li>)}</ol></section>}{filteredHistory.length === 0 && (historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person, phrase, or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Posts will stay here after you read them.</h2></section>)}</section>}
     </main>
     <footer className="site-footer"><span>Signal over noise.</span><span>Finite Feed</span></footer>
   </div>;

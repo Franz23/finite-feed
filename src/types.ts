@@ -41,13 +41,9 @@ export type Profile = {
   lastScrapedAt: string | null;
 };
 
-export type HistoryItem = {
-  id: string;
-  profileName: string;
-  linkedinUrl: string;
-  platform: "linkedin" | "x";
-  publishedAt: string;
+export type HistoryItem = FeedPost & {
   seenAt: string;
+  display: "full" | "link";
 };
 
 export type RefreshStatus = {
