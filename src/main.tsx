@@ -342,9 +342,11 @@ function FeedApp() {
   const refreshFailed = data?.refresh.status === "failed";
   return <div className="app-shell">
     <header className="topbar">
-      <button className="brand-button" onClick={() => setView("today")}><Brand compact /></button>
-      <nav aria-label="Feed sections">{(["today", "people", "history"] as const).map((item) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
-      <button className="refresh-button" disabled={busy || isRefreshing} onClick={() => void refresh()}><Icon name="refresh" /><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button>
+      <div className="topbar-inner">
+        <button className="brand-button" onClick={() => setView("today")}><Brand compact /></button>
+        <nav aria-label="Feed sections">{(["today", "people", "history"] as const).map((item) => <button key={item} className={view === item ? "active" : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
+        <button className="refresh-button" disabled={busy || isRefreshing} onClick={() => void refresh()}><Icon name="refresh" /><span>{isRefreshing ? "Refreshing" : "Refresh"}</span></button>
+      </div>
     </header>
     <main id="top">
       <section className="page-intro"><div><span className="eyebrow">{today}</span><h1>{view === "today" ? "Today’s reading" : view === "people" ? "Your people" : "Read history"}</h1></div><div className="edition-note"><strong>{view === "today" ? unreadFeed.length : view === "people" ? data?.profiles.length ?? 0 : filteredHistory.length}</strong><span>{view === "today" ? "unread posts" : view === "people" ? "tracked people" : historyQuery ? "matching posts" : "read posts"}</span></div></section>

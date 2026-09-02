@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { randomUUID } from "node:crypto";
 import { startActorRun } from "./_lib/apify.js";
 import { apiError, methodNotAllowed } from "./_lib/http.js";
+import { refreshSince } from "./_lib/refresh-window.js";
 import { adminClient, requireUser } from "./_lib/supabase.js";
 
 export default async function handler(request: VercelRequest, response: VercelResponse) {
@@ -39,12 +40,18 @@ export default async function handler(request: VercelRequest, response: VercelRe
       targets = targets.filter((profile) => !activeUrls.has(profile.linkedin_url));
       if (targets.length === 0) return response.status(202).json({ status: "running" });
     }
-    const days = targets.some((profile) => !profile.last_scraped_at) ? 7 : 3;
     const batchId = randomUUID();
     const byPlatform = new Map<"linkedin" | "x", typeof targets>();
     for (const profile of targets) byPlatform.set(profile.platform, [...(byPlatform.get(profile.platform) ?? []), profile]);
     await Promise.all([...byPlatform.entries()].map(([platform, platformTargets]) =>
-      startActorRun(request, platformTargets.map((profile) => profile.linkedin_url), user.id, days, platform, batchId),
+      startActorRun(
+        request,
+        platformTargets.map((profile) => profile.linkedin_url),
+        user.id,
+        refreshSince(platformTargets),
+        platform,
+        batchId,
+      ),
     ));
     return response.status(202).json({ status: "running", profiles: targets.length });
   } catch (error) {

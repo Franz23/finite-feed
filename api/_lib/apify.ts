@@ -195,7 +195,7 @@ export async function startActorRun(
   request: VercelRequest,
   targetUrls: string[],
   userId: string | null,
-  days: number,
+  since: string,
   platform: SocialPlatform = "linkedin",
   batchId?: string,
 ) {
@@ -226,13 +226,15 @@ export async function startActorRun(
     body: JSON.stringify(platform === "x" ? {
       twitterHandles: targetUrls.map((url) => new URL(url).pathname.split("/").filter(Boolean)[0]),
       maxTweetsPerProfile: 20,
-      since: new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10),
+      since,
+      incremental: true,
+      stateStoreName: "finite-feed-x-v1",
       includeReplies: false,
       includeRetweets: true,
       includeAuthorProfile: true,
     } : {
       targetUrls, maxPosts: 0,
-      postedLimitDate: new Date(Date.now() - days * 86_400_000).toISOString(),
+      postedLimitDate: since,
       includeReposts: true, includeQuotePosts: true, scrapeComments: false, scrapeReactions: false,
     }),
   });
@@ -276,6 +278,7 @@ export async function ingestDataset(datasetId: string, platform: SocialPlatform 
   const existingIdByUrl = new Map(
     ((existingPosts ?? []) as Array<{ id: string; linkedin_url: string }>).map((post) => [post.linkedin_url, post.id]),
   );
+  const newPostCount = uniqueByUrl.filter((post) => !existingIdByUrl.has(post.linkedinUrl)).length;
   const normalized = uniqueByUrl.map((post) => ({
     ...post,
     id: existingIdByUrl.get(post.linkedinUrl) ?? post.id,
@@ -305,7 +308,7 @@ export async function ingestDataset(datasetId: string, platform: SocialPlatform 
     const { error: updateError } = await db.from("profiles").update(values).eq("id", post.profileId);
     if (updateError) throw updateError;
   }));
-  return normalized.length;
+  return newPostCount;
 }
 
 export async function finalizeActorRun(actorRunId: string, datasetId: string): Promise<number> {
@@ -313,11 +316,12 @@ export async function finalizeActorRun(actorRunId: string, datasetId: string): P
   const now = new Date().toISOString();
   const { data: refreshRun, error: refreshError } = await db
     .from("refresh_runs")
-    .select("target_urls, platform")
+    .select("target_urls, platform, started_at")
     .eq("actor_run_id", actorRunId)
     .maybeSingle();
   if (refreshError) throw refreshError;
   const platform: SocialPlatform = refreshRun?.platform === "x" ? "x" : "linkedin";
+  const checkedThrough = typeof refreshRun?.started_at === "string" ? refreshRun.started_at : now;
   const count = await ingestDataset(datasetId, platform);
   const targetUrls = Array.isArray(refreshRun?.target_urls)
     ? refreshRun.target_urls.filter((url: unknown): url is string => typeof url === "string")
@@ -325,7 +329,7 @@ export async function finalizeActorRun(actorRunId: string, datasetId: string): P
   if (targetUrls.length > 0) {
     const { error: profileError } = await db
       .from("profiles")
-      .update({ last_scraped_at: now, updated_at: now })
+      .update({ last_scraped_at: checkedThrough, updated_at: now })
       .in("linkedin_url", targetUrls);
     if (profileError) throw profileError;
   }

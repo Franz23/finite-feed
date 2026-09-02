@@ -13,7 +13,7 @@ Finite Feed collects public original posts and reposts without asking for a Link
 - Sort by **Most recent** or **Most engaged**
 - Inline images, videos, and document covers when the scraper returns them
 - Scroll-past read tracking with a link-only personal history
-- On-demand refreshes when someone opens a stale feed, adds people, or explicitly refreshes
+- Background refreshes every six hours, plus on-demand checks when someone opens a stale feed, adds people, or explicitly refreshes
 - Shared profile and post records so multiple users do not cause duplicate scrapes
 
 ## Stack
@@ -54,9 +54,9 @@ corepack pnpm dev:full
 2. Add the Supabase integration or set the variables shown in `.env.example`.
 3. Set `APP_BASE_URL` to the production URL.
 4. Apply the Supabase migration.
-5. Deploy. Scrapes run only from signed-in product activity; there is no background schedule.
+5. Add a random `CRON_SECRET` of at least 16 characters to the Vercel project, then deploy. Four daily Vercel cron jobs refresh followed profiles at roughly six-hour intervals. Separate daily jobs keep the schedule compatible with Vercel's Hobby tier.
 
-The Apify token, Supabase secret key, and webhook secret are server-only. Only the Supabase URL and publishable key are exposed to the browser.
+The Apify token, Supabase secret key, webhook secret, and cron secret are server-only. Only the Supabase URL and publishable key are exposed to the browser.
 
 ## Cost profile
 

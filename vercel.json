@@ -5,5 +5,23 @@
     "api/**/*.ts": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron-refresh-00",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron-refresh-06",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron-refresh-12",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron-refresh-18",
+      "schedule": "0 18 * * *"
+    }
+  ]
 }
