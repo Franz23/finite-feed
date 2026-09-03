@@ -4,6 +4,7 @@ import type { DiscoveryCandidate, DiscoveryStatus } from "../../src/types.js";
 import { adminClient, publicAppUrl } from "./supabase.js";
 
 export type DiscoveryKind = "posts" | "comments" | "reactions";
+type DiscoveryMode = "initial" | "incremental";
 
 type Signal = {
   discovery_run_id: string;
@@ -86,12 +87,13 @@ function signalFromItem(value: unknown, kind: DiscoveryKind, sourceProfileUrl: s
   return signal ? { ...signal, source_id: sourceId } : null;
 }
 
-function actorInput(kind: DiscoveryKind, profileUrl: string): Record<string, unknown> {
+function actorInput(kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode): Record<string, unknown> {
+  const postedLimit = mode === "incremental" ? "month" : "year";
   if (kind === "posts") return {
     targetUrls: [profileUrl], maxPosts: 20, includeReposts: true, includeQuotePosts: true,
-    scrapeComments: false, scrapeReactions: false,
+    scrapeComments: false, scrapeReactions: false, postedLimit,
   };
-  return { profiles: [profileUrl], maxItems: 30 };
+  return { profiles: [profileUrl], maxItems: 30, postedLimit };
 }
 
 function actorId(kind: DiscoveryKind): string {
@@ -100,7 +102,7 @@ function actorId(kind: DiscoveryKind): string {
   return process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
 }
 
-export async function startDiscoveryActor(request: VercelRequest, actorRowId: string, kind: DiscoveryKind, profileUrl: string) {
+export async function startDiscoveryActor(request: VercelRequest, actorRowId: string, kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode) {
   const token = process.env.APIFY_API_TOKEN;
   const secret = process.env.APIFY_WEBHOOK_SECRET;
   if (!token || !secret) throw new Error("Apify is not configured.");
@@ -118,7 +120,7 @@ export async function startDiscoveryActor(request: VercelRequest, actorRowId: st
   const actorResponse = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(actorInput(kind, profileUrl)),
+    body: JSON.stringify(actorInput(kind, profileUrl, mode)),
   });
   const payload: unknown = await actorResponse.json();
   const data = isRecord(payload) ? nested(payload, "data") : undefined;
@@ -131,6 +133,56 @@ export async function startDiscoveryActor(request: VercelRequest, actorRowId: st
   const { error: updateError } = await db.from("discovery_actor_runs").update({ status: "running", actor_run_id: actorRunId }).eq("id", actorRowId);
   if (updateError) throw updateError;
   return actorRunId;
+}
+
+export async function createDiscoveryRun(
+  request: VercelRequest,
+  userId: string,
+  profileUrl: string,
+  mode: DiscoveryMode = "initial",
+): Promise<DiscoveryStatus> {
+  const db = adminClient();
+  const { data: run, error } = await db.from("discovery_runs").insert({
+    user_id: userId, profile_url: profileUrl, status: "running",
+  }).select("id").single();
+  if (error) {
+    if (error.code === "23505") return getDiscoveryStatus(userId);
+    throw error;
+  }
+  const kinds: DiscoveryKind[] = ["posts", "comments", "reactions"];
+  const { data: actorRows, error: actorRowsError } = await db.from("discovery_actor_runs")
+    .insert(kinds.map((kind) => ({ discovery_run_id: run.id, kind, status: "starting" })))
+    .select("id, kind");
+  if (actorRowsError) {
+    await db.from("discovery_runs").update({ status: "failed", finished_at: new Date().toISOString(), error: actorRowsError.message }).eq("id", run.id);
+    throw actorRowsError;
+  }
+  await Promise.allSettled((actorRows ?? []).map((actor) =>
+    startDiscoveryActor(request, actor.id, actor.kind as DiscoveryKind, profileUrl, mode),
+  ));
+  await finishDiscoveryRun(run.id);
+  return getDiscoveryStatus(userId);
+}
+
+export async function startDueDiscoveryRuns(request: VercelRequest, limit = 10): Promise<number> {
+  const db = adminClient();
+  const { data: runs, error } = await db.from("discovery_runs")
+    .select("user_id, profile_url, status, started_at")
+    .order("started_at", { ascending: false })
+    .limit(5000);
+  if (error) throw error;
+  const latestByUser = new Map<string, { userId: string; profileUrl: string; status: string; startedAt: string }>();
+  for (const run of runs ?? []) {
+    if (!latestByUser.has(run.user_id)) latestByUser.set(run.user_id, {
+      userId: run.user_id, profileUrl: run.profile_url, status: run.status, startedAt: run.started_at,
+    });
+  }
+  const cutoff = Date.now() - 14 * 24 * 60 * 60_000;
+  const due = [...latestByUser.values()].filter((run) =>
+    !["starting", "running"].includes(run.status) && Date.parse(run.startedAt) <= cutoff,
+  ).slice(0, limit);
+  await Promise.all(due.map((run) => createDiscoveryRun(request, run.userId, run.profileUrl, "incremental")));
+  return due.length;
 }
 
 export async function finishDiscoveryRun(discoveryRunId: string): Promise<void> {

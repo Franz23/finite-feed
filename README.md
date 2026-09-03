@@ -9,6 +9,7 @@ Finite Feed collects public original posts and reposts without asking for a Link
 - Passwordless email-link and Google authentication through Supabase Auth
 - One-profile onboarding that scans a member's public LinkedIn posts, comments, and reactions to recommend people they already engage with
 - Explainable recommendations weighted toward comments and reposts, with manual LinkedIn or X URL entry as a fallback
+- Activity-based suggestions in the People tab, refreshed every two weeks with a one-month activity window
 - Add more profiles later by pasting comma- or newline-separated URLs
 - Sort by **Most recent** or **Most engaged**
 - Inline images, videos, and document covers when the scraper returns them
@@ -34,7 +35,7 @@ cp .env.example .env.local
 
 Create a Supabase project, fill in `.env.local`, and run `corepack pnpm db:migrate` to apply the SQL files in `supabase/migrations` in order. Never commit `.env.local`.
 
-In Supabase Authentication, set the Site URL and allowed redirect URLs to your local and production origins. Email-link authentication works with the email provider. To show **Continue with Google**, enable the Google provider and set `VITE_GOOGLE_AUTH_ENABLED=true`. Configure custom SMTP before inviting production users because Supabase's built-in sender is intended for testing.
+In Supabase Authentication, set the Site URL and allowed redirect URLs to your local and production origins. Email-link authentication works with the email provider. To show **Continue with Google**, enable the Google provider and set `VITE_GOOGLE_AUTH_ENABLED=true`. Configure custom SMTP with **Finite Feed** as the sender name before inviting production users because Supabase's built-in sender is intended for testing.
 
 Run the frontend:
 

@@ -4,7 +4,7 @@ import type { Session } from "@supabase/supabase-js";
 import { addFollows, getBootstrap, getDiscovery, markSeen, removeFollow, startDiscovery, startRefresh } from "./api";
 import { parseSocialUrls } from "./social";
 import { isSupabaseConfigured, supabase } from "./supabase";
-import type { Bootstrap, DiscoveryStatus, FeedPost, RefreshStatus } from "./types";
+import type { Bootstrap, DiscoveryStatus, FeedPost, Profile, RefreshStatus } from "./types";
 import "./styles.css";
 
 type View = "today" | "people" | "history";
@@ -372,6 +372,68 @@ function Onboarding({ email }: { email: string }) {
   </main>;
 }
 
+function PeopleDiscovery({ profiles, onChanged }: { profiles: Profile[]; onChanged: (message: string) => Promise<void> }) {
+  const [profileUrl, setProfileUrl] = useState("");
+  const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selectionRun = useRef<string | null>(null);
+  const followed = useMemo(() => new Set(profiles.map((profile) => profile.linkedinUrl)), [profiles]);
+  const candidates = useMemo(
+    () => (discovery?.candidates ?? []).filter((candidate) => !followed.has(candidate.linkedinUrl)),
+    [discovery?.candidates, followed],
+  );
+  const receive = useCallback((next: DiscoveryStatus) => {
+    setDiscovery(next);
+    if (next.profileUrl) setProfileUrl(next.profileUrl);
+    if (next.id && next.status === "succeeded" && selectionRun.current !== next.id) {
+      selectionRun.current = next.id;
+      const existing = new Set(profiles.map((profile) => profile.linkedinUrl));
+      setSelected(new Set(next.candidates.filter((candidate) => !existing.has(candidate.linkedinUrl)).slice(0, 8).map((candidate) => candidate.linkedinUrl)));
+    }
+  }, [profiles]);
+
+  useEffect(() => { void getDiscovery().then(receive).catch(() => undefined); }, [receive]);
+  useEffect(() => {
+    if (discovery?.status !== "starting" && discovery?.status !== "running") return;
+    const interval = window.setInterval(() => void getDiscovery().then(receive).catch(() => undefined), 3_000);
+    return () => window.clearInterval(interval);
+  }, [discovery?.status, receive]);
+
+  async function scan(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try { receive(await startDiscovery(profileUrl)); }
+    catch (scanError) { setError(scanError instanceof Error ? scanError.message : "We could not scan that profile."); }
+    finally { setBusy(false); }
+  }
+
+  async function addSelected() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await addFollows([...selected]);
+      await startRefresh();
+      setSelected(new Set());
+      await onChanged(`${result.added} ${result.added === 1 ? "person" : "people"} added from your activity — checking for posts now.`);
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : "We could not add those people.");
+    } finally { setBusy(false); }
+  }
+
+  const scanning = discovery?.status === "starting" || discovery?.status === "running";
+  return <section className="people-discovery">
+    <div className="people-discovery-copy"><span className="eyebrow">Smart suggestions</span><h2>Find people you already value.</h2><p>Add your own LinkedIn profile and Finite Feed will surface people you regularly comment on, repost, or react to. It checks again every two weeks.</p></div>
+    <form className="people-discovery-form" onSubmit={(event) => void scan(event)}><label htmlFor="people-own-linkedin">Your LinkedIn profile</label><div><input id="people-own-linkedin" type="url" value={profileUrl} onChange={(event) => setProfileUrl(event.target.value)} placeholder="linkedin.com/in/your-name" required /><button className="primary-button" disabled={busy || scanning} type="submit"><Icon name="refresh" />{busy && !scanning ? "Starting…" : discovery?.id ? "Scan again" : "Find my people"}</button></div></form>
+    {(scanning || (busy && candidates.length === 0)) && <div className="people-discovery-status" role="status"><span className="building-pulse" aria-hidden="true" /><span>Reading your recent public activity…</span></div>}
+    {!scanning && discovery?.status === "succeeded" && candidates.length === 0 && <p className="people-discovery-status">You’re up to date—there are no new suggestions from this scan.</p>}
+    {!scanning && candidates.length > 0 && <><div className="people-suggestions-heading"><strong>Worth adding</strong><span>{selected.size} selected</span></div><ol className="people-suggestions">{candidates.map((candidate) => <li key={candidate.linkedinUrl}><label><input type="checkbox" checked={selected.has(candidate.linkedinUrl)} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(candidate.linkedinUrl)) next.delete(candidate.linkedinUrl); else next.add(candidate.linkedinUrl); return next; })} /><span className="candidate-avatar">{candidate.avatarUrl ? <img src={candidate.avatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(candidate.name ?? "LinkedIn member")}</span>}</span><span className="candidate-copy"><strong>{candidate.name ?? candidate.linkedinUrl.split("/").at(-1)}</strong><small>{candidate.reason}</small></span></label></li>)}</ol><button className="primary-button people-add-suggestions" type="button" disabled={busy || selected.size === 0} onClick={() => void addSelected()}>{busy ? "Adding…" : `Add ${selected.size} to my feed`} <Icon name="arrow" /></button></>}
+    {error && <p className="inline-error" role="alert">{error}</p>}
+  </section>;
+}
+
 function FeedApp() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [view, setView] = useState<View>("today");
@@ -433,7 +495,7 @@ function FeedApp() {
       {(message || actionError) && <div className={`notice ${actionError ? "error" : "success"}`} role={actionError ? "alert" : "status"}><span>{actionError ?? message}</span><button aria-label="Dismiss message" onClick={() => { setMessage(null); setActionError(null); }}><Icon name="close" /></button></div>}
       {refreshFailed && (view !== "today" || sortedFeed.length > 0) && <div className="refresh-failure" role="alert"><div><strong>Refresh failed.</strong><span>{data?.refresh.error ?? "The latest check did not finish."}</span></div><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry</button></div>}
       {view === "today" && <section className="feed" aria-label="Unread social posts">{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact={sortedFeed.length > 0} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{unreadFeed.length === 0 ? "Reading complete" : sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="balanced">Balanced by person</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<FeedEnd remainingIds={unreadFeed.map((post) => post.id)} onSeen={handleSeenMany} /></> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state mindful-empty"><span className="empty-kicker">All caught up</span><h2>You’re up to date.</h2><DailyQuote /><button className="text-button" type="button" onClick={() => setView("history")}>View recent history</button></section>}</section>}
-      {view === "people" && <section className="people-view"><UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); const status = await startRefresh(); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added${status === "fresh" ? "." : " — checking for posts now."}`); await reload(); }} />{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact />}{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : isRefreshing ? "Checking now" : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}
+      {view === "people" && <section className="people-view">{data && <PeopleDiscovery profiles={data.profiles} onChanged={async (nextMessage) => { setMessage(nextMessage); await reload(); }} />}<UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); const status = await startRefresh(); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added${status === "fresh" ? "." : " — checking for posts now."}`); await reload(); }} />{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact />}{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : isRefreshing ? "Checking now" : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}
       {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person, post, or URL" /></div><p className="history-intro">Full posts stay readable here for 48 hours. After that, Finite Feed keeps only the reference link.</p>{recentHistory.length > 0 && <section className="history-feed" aria-label="Posts read in the last 48 hours"><div className="history-section-label"><strong>Last 48 hours</strong><span>{recentHistory.length} {recentHistory.length === 1 ? "post" : "posts"}</span></div>{recentHistory.map((item) => <FeedCard key={item.id} post={item} archived />)}</section>}{olderHistory.length > 0 && <section className="older-history"><div className="history-section-label"><strong>Older links</strong><span>Reference only</span></div><ol className="history-list">{olderHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on ${item.platform === "x" ? "X" : "LinkedIn"}`}><Icon name="arrow" /></a></li>)}</ol></section>}{filteredHistory.length === 0 && (historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person, phrase, or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Posts will stay here after you read them.</h2></section>)}</section>}
     </main>
     <footer className="site-footer"><span>Signal over noise.</span><span>Finite Feed</span></footer>

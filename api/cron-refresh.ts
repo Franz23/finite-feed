@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { startActorRun } from "./_lib/apify.js";
+import { startDueDiscoveryRuns } from "./_lib/discovery.js";
 import { apiError, methodNotAllowed } from "./_lib/http.js";
 import { refreshSince } from "./_lib/refresh-window.js";
 import { adminClient } from "./_lib/supabase.js";
@@ -26,6 +27,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
   try {
     const db = adminClient();
+    const discoveryRunsStarted = await startDueDiscoveryRuns(request);
     const { data: follows, error: followsError } = await db
       .from("user_follows")
       .select("profiles(linkedin_url, last_scraped_at, platform)")
@@ -41,7 +43,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       !profile.last_scraped_at || Date.parse(profile.last_scraped_at) < staleCutoff,
     );
 
-    if (targets.length === 0) return response.status(200).json({ status: "fresh", profiles: 0 });
+    if (targets.length === 0) return response.status(200).json({ status: "fresh", profiles: 0, discoveryRunsStarted });
 
     // Vercel may deliver the same cron event more than once. Avoid starting another
     // scrape for a profile that is already part of a recent active run.
@@ -57,7 +59,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       (active ?? []).flatMap((run) => Array.isArray(run.target_urls) ? run.target_urls : []),
     );
     targets = targets.filter((profile) => !activeUrls.has(profile.linkedin_url));
-    if (targets.length === 0) return response.status(202).json({ status: "running", profiles: 0 });
+    if (targets.length === 0) return response.status(202).json({ status: "running", profiles: 0, discoveryRunsStarted });
 
     const batchId = randomUUID();
     const byPlatform = new Map<"linkedin" | "x", RefreshTarget[]>();
@@ -75,7 +77,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
       ),
     ));
 
-    return response.status(202).json({ status: "running", profiles: targets.length });
+    return response.status(202).json({ status: "running", profiles: targets.length, discoveryRunsStarted });
   } catch (error) {
     return apiError(response, error);
   }

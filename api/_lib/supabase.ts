@@ -35,9 +35,8 @@ export async function requireUser(request: VercelRequest): Promise<Authenticated
 }
 
 export function publicAppUrl(request: VercelRequest): string {
-  const configured = process.env.APP_BASE_URL;
-  if (configured) return configured.replace(/\/$/, "");
   const host = request.headers["x-forwarded-host"] ?? request.headers.host;
   const value = Array.isArray(host) ? host[0] : host;
-  return value ? `https://${value}` : "";
+  if (value) return `https://${value}`;
+  return (process.env.APP_BASE_URL ?? "").replace(/\/$/, "");
 }
