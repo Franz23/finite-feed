@@ -66,3 +66,25 @@ export type FollowResult = {
   added: number;
   total: number;
 };
+
+export type DiscoveryCandidate = {
+  linkedinUrl: string;
+  name: string | null;
+  headline: string | null;
+  avatarUrl: string | null;
+  comments: number;
+  reactions: number;
+  reposts: number;
+  score: number;
+  reason: string;
+};
+
+export type DiscoveryStatus = {
+  id: string | null;
+  status: "idle" | "starting" | "running" | "succeeded" | "failed";
+  profileUrl: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  error: string | null;
+  candidates: DiscoveryCandidate[];
+};

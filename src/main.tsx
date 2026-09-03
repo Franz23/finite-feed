@@ -1,10 +1,10 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Session } from "@supabase/supabase-js";
-import { addFollows, getBootstrap, markSeen, removeFollow, startRefresh } from "./api";
+import { addFollows, getBootstrap, getDiscovery, markSeen, removeFollow, startDiscovery, startRefresh } from "./api";
 import { parseSocialUrls } from "./social";
 import { isSupabaseConfigured, supabase } from "./supabase";
-import type { Bootstrap, FeedPost, RefreshStatus } from "./types";
+import type { Bootstrap, DiscoveryStatus, FeedPost, RefreshStatus } from "./types";
 import "./styles.css";
 
 type View = "today" | "people" | "history";
@@ -22,20 +22,6 @@ const closingQuotes = [
   { text: "Nature does not hurry, yet everything is accomplished.", author: "Lao Tzu" },
   { text: "How we spend our days is, of course, how we spend our lives.", author: "Annie Dillard" },
 ] as const;
-const claudeSelectionPrompt = `I want to create a focused LinkedIn reading list, not import my entire network.
-
-Analyze the LinkedIn data export I attach. Start by asking what people, topics, industries, or relationships I want to stay current with.
-
-Then recommend 10–25 people to follow. Prioritize:
-1. How recently we exchanged messages.
-2. Meaningful message volume and reciprocity.
-3. Relevance to the goals I described.
-
-Do not include company pages, weak one-off contacts, or people without a public LinkedIn profile URL. Do not reproduce private message content in the result.
-
-Return:
-- A short table with name, why they matter, and LinkedIn URL.
-- A final comma-separated list containing only the selected LinkedIn profile URLs, ready to paste into Finite Feed.`;
 
 function formatRelativeDate(value: string): string {
   const date = new Date(value);
@@ -114,19 +100,6 @@ function GoogleMark() {
 
 function FocusPreview() {
   return <div className="focus-preview" aria-hidden="true"><header><span>Today’s signal</span><strong>3</strong></header><div className="preview-stack"><div className="preview-post muted"><span className="preview-avatar">A</span><div><strong>Someone you follow</strong><span>Shared a new perspective</span></div><time>18m</time></div><div className="preview-post active"><span className="preview-avatar">B</span><div><strong>Worth your attention</strong><span>Original post · 42 reactions</span></div><time>2h</time></div><div className="preview-post muted"><span className="preview-avatar">C</span><div><strong>From your inner circle</strong><span>Reposted with context</span></div><time>5h</time></div></div><footer><span>End of today’s feed</span><Icon name="check" /></footer></div>;
-}
-
-function ClaudeSelectionGuide() {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  async function copyPrompt() {
-    try {
-      await navigator.clipboard.writeText(claudeSelectionPrompt);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-  }
-  return <details className="selection-guide"><summary><span>Need help choosing people?</span><span>Use your LinkedIn network with Claude</span></summary><div className="selection-guide-body"><div className="selection-guide-copy"><span className="guide-kicker">Alternative method</span><h2>Turn your network into a shortlist.</h2><p>Your LinkedIn export is only a shortcut for giving Claude access to your network. You do not upload the archive to Finite Feed.</p><ol><li><span>1</span><p>In LinkedIn, open <strong>Settings → Data privacy → Download your data</strong> and request your archive.</p></li><li><span>2</span><p>Give that archive to Claude with the prompt below. Claude will help you choose the people worth following.</p></li><li><span>3</span><p>Copy Claude’s final list of profile URLs into Finite Feed above.</p></li></ol></div><figure><img src="/linkedin-data-download.png" alt="LinkedIn settings showing Data privacy selected and Download your data highlighted" loading="lazy" decoding="async" /><figcaption>Where to find LinkedIn’s data download.</figcaption></figure><div className="claude-prompt"><div className="claude-prompt-header"><strong>Prompt for Claude</strong><button type="button" onClick={() => void copyPrompt()}>{copyState === "copied" ? "Copied" : "Copy prompt"}</button></div><pre>{claudeSelectionPrompt}</pre>{copyState === "failed" && <p className="inline-error" role="alert">Copy failed. Select the prompt text and copy it manually.</p>}</div></div></details>;
 }
 
 function Skeleton() {
@@ -261,11 +234,42 @@ function AuthScreen() {
 }
 
 function Onboarding({ email }: { email: string }) {
-  const [complete, setComplete] = useState(false);
+  const [profileUrl, setProfileUrl] = useState("");
+  const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [manualOpen, setManualOpen] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [feedBusy, setFeedBusy] = useState(false);
+  const [building, setBuilding] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [pollCycle, setPollCycle] = useState(0);
+  const selectionRun = useRef<string | null>(null);
+
+  const receiveDiscovery = useCallback((next: DiscoveryStatus) => {
+    setDiscovery(next);
+    if (next.id && next.status === "succeeded" && selectionRun.current !== next.id) {
+      selectionRun.current = next.id;
+      setSelected(new Set(next.candidates.slice(0, 12).map((candidate) => candidate.linkedinUrl)));
+    }
+  }, []);
+
   useEffect(() => {
-    if (!complete) return;
+    const controller = new AbortController();
+    void getDiscovery(controller.signal).then(receiveDiscovery).catch(() => undefined);
+    return () => controller.abort();
+  }, [receiveDiscovery]);
+
+  useEffect(() => {
+    if (discovery?.status !== "starting" && discovery?.status !== "running") return;
+    const interval = window.setInterval(() => {
+      void getDiscovery().then(receiveDiscovery).catch(() => undefined);
+    }, 3_000);
+    return () => window.clearInterval(interval);
+  }, [discovery?.status, receiveDiscovery]);
+
+  useEffect(() => {
+    if (!building) return;
     let stopped = false;
     let timeout: number | undefined;
     async function checkRefresh() {
@@ -287,9 +291,85 @@ function Onboarding({ email }: { email: string }) {
     }
     void checkRefresh();
     return () => { stopped = true; if (timeout) window.clearTimeout(timeout); };
-  }, [complete, pollCycle]);
-  if (complete) return <div className="centered-state building-state"><Brand /><span className="building-pulse" aria-hidden="true" /><h1>{buildError ? "The refresh paused." : "Building your feed…"}</h1><p>{buildError ?? "Checking the past week for posts. This usually takes less than a minute."}</p>{buildError && <button className="primary-button" type="button" onClick={() => { setBuildError(null); void startRefresh().then(() => setPollCycle((current) => current + 1)).catch((error: unknown) => setBuildError(error instanceof Error ? error.message : "Could not retry the refresh.")); }}><Icon name="refresh" />Retry refresh</button>}</div>;
-  return <main className="onboarding-page"><header className="onboarding-header"><Brand /><div className="onboarding-account"><span>Signed in as <strong>{email}</strong></span><button type="button" onClick={() => void supabase.auth.signOut()}>Use another account</button></div></header><ol className="setup-progress" aria-label="Account setup progress"><li className="done"><Icon name="check" /><span>Account</span></li><li className="active"><span>2</span><span>Choose people</span></li><li><span>3</span><span>Read</span></li></ol><section className="onboarding-layout"><div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>Whose updates are worth your time?</h1><p>Paste at least three public LinkedIn or X profiles. Finite Feed collects their original posts and reposts without needing either account login.</p><div className="privacy-note"><Icon name="check" /><span>You can add or remove people whenever you like.</span></div></div><div className="onboarding-card"><div className="onboarding-card-heading"><strong>Your first people</strong><span>Minimum 3</span></div><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={async (urls) => { await addFollows(urls); await startRefresh(); setComplete(true); }} /></div></section><ClaudeSelectionGuide /></main>;
+  }, [building, pollCycle]);
+
+  async function scanProfile(event: React.FormEvent) {
+    event.preventDefault();
+    setDiscoveryError(null);
+    setScanBusy(true);
+    try {
+      receiveDiscovery(await startDiscovery(profileUrl));
+    } catch (error) {
+      setDiscoveryError(error instanceof Error ? error.message : "We could not scan that profile.");
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
+  async function buildFeed(urls: string[]) {
+    if (urls.length < 3) {
+      setDiscoveryError("Choose at least three people to build your first feed.");
+      return;
+    }
+    setDiscoveryError(null);
+    setFeedBusy(true);
+    try {
+      await addFollows(urls);
+      await startRefresh();
+      setBuilding(true);
+    } catch (error) {
+      setDiscoveryError(error instanceof Error ? error.message : "We could not build your feed.");
+      throw error;
+    } finally {
+      setFeedBusy(false);
+    }
+  }
+
+  function toggleCandidate(url: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(url)) next.delete(url); else next.add(url);
+      return next;
+    });
+  }
+
+  if (building) return <div className="centered-state building-state"><Brand /><span className="building-pulse" aria-hidden="true" /><h1>{buildError ? "The refresh paused." : "Building your feed…"}</h1><p>{buildError ?? "Checking the past week for posts. This usually takes less than a minute."}</p>{buildError && <button className="primary-button" type="button" onClick={() => { setBuildError(null); void startRefresh().then(() => setPollCycle((current) => current + 1)).catch((error: unknown) => setBuildError(error instanceof Error ? error.message : "Could not retry the refresh.")); }}><Icon name="refresh" />Retry refresh</button>}</div>;
+
+  const scanning = scanBusy || discovery?.status === "starting" || discovery?.status === "running";
+  const hasResults = discovery?.status === "succeeded" && discovery.candidates.length > 0;
+  const reviewStep = hasResults;
+  return <main className="onboarding-page">
+    <header className="onboarding-header"><Brand /><div className="onboarding-account"><span>Signed in as <strong>{email}</strong></span><button type="button" onClick={() => void supabase.auth.signOut()}>Use another account</button></div></header>
+    <ol className="setup-progress" aria-label="Account setup progress">
+      <li className="done"><Icon name="check" /><span>Account</span></li>
+      <li className={reviewStep ? "done" : "active"}>{reviewStep ? <Icon name="check" /> : <span>2</span>}<span>Find people</span></li>
+      <li className={reviewStep ? "active" : ""}><span>3</span><span>Review</span></li>
+      <li><span>4</span><span>Read</span></li>
+    </ol>
+    <section className={`onboarding-layout ${hasResults ? "with-results" : ""}`}>
+      <div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>{hasResults ? "Your circle, surfaced." : "Start with yourself."}</h1><p>{hasResults ? "We found the people you return to through comments, reposts, and reactions. Keep the ones whose updates you want to see." : "Give us your LinkedIn profile. We’ll look at your public activity and find the people you engage with most."}</p><div className="privacy-note"><Icon name="check" /><span>No LinkedIn login or cookies required.</span></div></div>
+      <div className="onboarding-card discovery-card">
+        {!scanning && !hasResults && <>
+          <div className="onboarding-card-heading"><strong>Find your people</strong><span>One URL</span></div>
+          <form className="discovery-form" onSubmit={(event) => void scanProfile(event)}>
+            <label htmlFor="own-linkedin">Your LinkedIn profile URL</label>
+            <input id="own-linkedin" type="url" value={profileUrl} onChange={(event) => setProfileUrl(event.target.value)} placeholder="linkedin.com/in/your-name" autoComplete="url" spellCheck={false} required />
+            <p>We scan up to 20 posts, 30 comments, and 30 reactions to create your shortlist.</p>
+            <button className="primary-button" type="submit" disabled={scanBusy}>{scanBusy ? "Starting scan…" : <>Find my people <Icon name="arrow" /></>}</button>
+          </form>
+          {(discovery?.status === "failed" || (discovery?.status === "succeeded" && discovery.candidates.length === 0)) && <div className="discovery-empty" role="status"><strong>{discovery.status === "failed" ? "The scan didn’t finish." : "Not enough public activity found."}</strong><span>{discovery.error ?? "You can try another profile or add people manually."}</span></div>}
+        </>}
+        {scanning && <section className="discovery-progress" role="status" aria-live="polite"><span className="building-pulse" aria-hidden="true" /><span className="step-label">Reading public activity</span><h2>Finding the people behind your feed…</h2><p>Checking recent posts, comments, and reactions. This usually takes under a minute.</p><div className="discovery-skeleton" aria-hidden="true">{[0, 1, 2].map((item) => <span key={item} />)}</div></section>}
+        {hasResults && <>
+          <div className="recommendation-heading"><div><strong>Recommended for you</strong><span>{selected.size} selected</span></div><button type="button" onClick={() => setSelected(new Set(discovery.candidates.map((candidate) => candidate.linkedinUrl)))}>Select all</button></div>
+          <ol className="recommendation-list">{discovery.candidates.map((candidate) => <li key={candidate.linkedinUrl}><label><input type="checkbox" checked={selected.has(candidate.linkedinUrl)} onChange={() => toggleCandidate(candidate.linkedinUrl)} /><span className="candidate-avatar">{candidate.avatarUrl ? <img src={candidate.avatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(candidate.name ?? "LinkedIn member")}</span>}</span><span className="candidate-copy"><strong>{candidate.name ?? candidate.linkedinUrl.split("/").at(-1)}</strong>{candidate.headline && <span>{candidate.headline}</span>}<small>{candidate.reason}</small></span></label></li>)}</ol>
+          <div className="recommendation-footer"><span>Choose at least 3</span><button className="primary-button" type="button" disabled={feedBusy || selected.size < 3} onClick={() => void buildFeed([...selected]).catch(() => undefined)}>{feedBusy ? "Building…" : <>Build my feed with {selected.size} <Icon name="arrow" /></>}</button></div>
+        </>}
+        {discoveryError && <p className="inline-error" role="alert">{discoveryError}</p>}
+      </div>
+    </section>
+    <details className="manual-onboarding" open={manualOpen} onToggle={(event) => setManualOpen(event.currentTarget.open)}><summary>Add people manually instead</summary><UrlEntry minimum={3} submitLabel="Build my feed" onSubmit={buildFeed} /></details>
+  </main>;
 }
 
 function FeedApp() {

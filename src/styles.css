@@ -288,6 +288,45 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .onboarding-card-heading strong { font-size: 0.86rem; }
 .onboarding-card-heading span { color: var(--accent); font-size: 0.64rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 .onboarding-card .url-form { margin-bottom: 0; padding: 0; border: 0; }
+.onboarding-layout.with-results { align-items: start; padding-top: clamp(3rem, 8vh, 5rem); }
+.discovery-form { display: grid; gap: 0.8rem; padding-top: 1.25rem; }
+.discovery-form label { font-size: 0.78rem; font-weight: 750; }
+.discovery-form input { width: 100%; border: 1px solid #b6c0ce; border-radius: 7px; padding: 0.82rem 0.9rem; background: white; color: var(--ink); font-weight: 500; }
+.discovery-form input:focus { border-color: var(--accent); outline: 3px solid rgb(36 87 245 / 14%); outline-offset: 0; }
+.discovery-form p { margin: 0; color: var(--muted); font-size: 0.68rem; line-height: 1.5; text-wrap: pretty; }
+.discovery-form .primary-button { width: 100%; min-height: 2.8rem; justify-content: center; margin-top: 0.3rem; }
+.discovery-empty { display: grid; gap: 0.25rem; margin-top: 1rem; padding: 0.85rem; border-left: 3px solid var(--danger); background: #f7e8e4; color: #6d281e; }
+.discovery-empty strong { font-size: 0.76rem; }
+.discovery-empty span { font-size: 0.7rem; line-height: 1.45; }
+.discovery-progress { min-height: 23rem; display: grid; place-content: center; justify-items: center; text-align: center; }
+.discovery-progress .building-pulse { width: 0.65rem; height: 0.65rem; margin-bottom: 1.2rem; border-radius: 50%; background: var(--accent); animation: breathe 1.1s ease-in-out infinite alternate; }
+.discovery-progress .step-label { margin-bottom: 0.75rem; }
+.discovery-progress h2 { max-width: 13ch; font-size: clamp(2rem, 4vw, 3rem); }
+.discovery-progress p { max-width: 30rem; margin: 1rem 0 1.5rem; color: var(--muted); font-size: 0.76rem; line-height: 1.55; text-wrap: pretty; }
+.discovery-skeleton { display: grid; width: min(100%, 22rem); gap: 0.55rem; }
+.discovery-skeleton span { display: block; height: 3.2rem; border-radius: 8px; background: #e3e8f0; animation: breathe 1.2s ease-in-out infinite alternate; }
+.recommendation-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--hairline); }
+.recommendation-heading > div { display: grid; gap: 0.22rem; }
+.recommendation-heading strong { font-size: 0.9rem; }
+.recommendation-heading span { color: var(--muted); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+.recommendation-heading button { border: 0; padding: 0.35rem 0; background: transparent; color: var(--accent); font-size: 0.68rem; font-weight: 750; cursor: pointer; }
+.recommendation-list { max-height: min(54dvh, 34rem); overflow-y: auto; margin: 0; padding: 0; list-style: none; scrollbar-gutter: stable; }
+.recommendation-list li { border-bottom: 1px solid var(--hairline); }
+.recommendation-list label { display: grid; grid-template-columns: 1rem 2.65rem minmax(0, 1fr); align-items: center; gap: 0.7rem; padding: 0.78rem 0.15rem; cursor: pointer; }
+.recommendation-list input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
+.candidate-avatar { display: grid; width: 2.65rem; height: 2.65rem; overflow: hidden; place-items: center; border: 1px solid #d4ddea; border-radius: 50%; background: var(--accent-soft); color: var(--accent-dark); font-size: 0.68rem; font-weight: 800; }
+.candidate-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.candidate-copy { min-width: 0; }
+.candidate-copy strong, .candidate-copy > span, .candidate-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.candidate-copy strong { font-size: 0.8rem; }
+.candidate-copy > span { margin-top: 0.08rem; color: var(--muted); font-size: 0.66rem; }
+.candidate-copy small { margin-top: 0.25rem; color: var(--accent); font-size: 0.62rem; font-weight: 700; }
+.recommendation-footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1rem; }
+.recommendation-footer > span { color: var(--muted); font-size: 0.66rem; }
+.recommendation-footer .primary-button { flex: none; }
+.manual-onboarding { border-top: 1px solid var(--hairline); }
+.manual-onboarding summary { width: max-content; margin: 0 auto; padding: 1.15rem; color: var(--muted); font-size: 0.72rem; font-weight: 700; cursor: pointer; }
+.manual-onboarding .url-form { width: min(100%, 34rem); margin: 1rem auto; }
 .selection-guide { border-top: 1px solid var(--hairline); }
 .selection-guide summary { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.15rem 0; color: var(--ink); cursor: pointer; list-style: none; }
 .selection-guide summary::-webkit-details-marker { display: none; }
@@ -362,6 +401,9 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
   .remove-person { grid-column: 3; grid-row: 1 / span 2; }
   .url-form-footer { align-items: stretch; flex-direction: column; }
   .url-form-footer .primary-button { width: 100%; }
+  .recommendation-footer { align-items: stretch; flex-direction: column; }
+  .recommendation-footer .primary-button { width: 100%; justify-content: center; }
+  .recommendation-list { max-height: none; }
   .remove-person, .history-list a { width: 2.75rem; height: 2.75rem; }
   .feed-toolbar select { min-height: 2.75rem; font-size: 1rem; }
   .onboarding-page { width: min(100% - 2rem, 1120px); }

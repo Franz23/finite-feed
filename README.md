@@ -7,8 +7,8 @@ Finite Feed collects public original posts and reposts without asking for a Link
 ## Product behavior
 
 - Passwordless email-link and Google authentication through Supabase Auth
-- At least three LinkedIn or X profile URLs during onboarding
-- Optional guidance for using a personal LinkedIn data export with Claude to produce a curated URL list; the archive is never uploaded to Finite Feed
+- One-profile onboarding that scans a member's public LinkedIn posts, comments, and reactions to recommend people they already engage with
+- Explainable recommendations weighted toward comments and reposts, with manual LinkedIn or X URL entry as a fallback
 - Add more profiles later by pasting comma- or newline-separated URLs
 - Sort by **Most recent** or **Most engaged**
 - Inline images, videos, and document covers when the scraper returns them
@@ -21,7 +21,7 @@ Finite Feed collects public original posts and reposts without asking for a Link
 - React + Vite
 - Vercel Functions
 - Supabase Auth + Postgres with Row Level Security
-- Apify using `harvestapi/linkedin-profile-posts` and `nick.cheng/x-twitter-profile-tweets-scraper`
+- Apify using HarvestAPI's LinkedIn profile posts, comments, and reactions actors plus `nick.cheng/x-twitter-profile-tweets-scraper`
 
 ## Local setup
 

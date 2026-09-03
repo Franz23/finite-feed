@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import type { Bootstrap, FollowResult } from "./types";
+import type { Bootstrap, DiscoveryStatus, FollowResult } from "./types";
 
 async function parseResponse<T>(response: Response): Promise<T> {
   const body = await response.text();
@@ -71,4 +71,16 @@ export async function startRefresh(force = false): Promise<string> {
     body: JSON.stringify({ force }),
   }));
   return result.status;
+}
+
+export async function getDiscovery(signal?: AbortSignal): Promise<DiscoveryStatus> {
+  return parseResponse<DiscoveryStatus>(await authorizedFetch("/api/discovery", { signal }));
+}
+
+export async function startDiscovery(profileUrl: string): Promise<DiscoveryStatus> {
+  return parseResponse<DiscoveryStatus>(await authorizedFetch("/api/discovery", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profileUrl }),
+  }));
 }

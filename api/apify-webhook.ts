@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { finalizeActorRun, verifyWebhookSecret, webhookDetails } from "./_lib/apify.js";
+import { failDiscoveryActor, finalizeDiscoveryActor } from "./_lib/discovery.js";
 import { apiError, errorMessage, methodNotAllowed } from "./_lib/http.js";
 import { adminClient } from "./_lib/supabase.js";
 
@@ -15,10 +16,20 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!details) throw new Error("Invalid webhook payload.");
     const db = adminClient();
     if (details.status !== "SUCCEEDED" || !details.datasetId) {
+      const discoveryHandled = await failDiscoveryActor(details.actorRunId, `Apify run ended with ${details.status}.`);
+      if (discoveryHandled) return response.status(202).json({ accepted: true });
       await db.from("refresh_runs").update({
         status: "failed", finished_at: new Date().toISOString(), error: `Apify run ended with ${details.status}.`,
       }).eq("actor_run_id", details.actorRunId);
       return response.status(202).json({ accepted: true });
+    }
+    try {
+      const discoveryCount = await finalizeDiscoveryActor(details.actorRunId, details.datasetId);
+      if (discoveryCount !== null) return response.status(202).json({ accepted: true, signals: discoveryCount });
+    } catch (discoveryError) {
+      const discoveryHandled = await failDiscoveryActor(details.actorRunId, errorMessage(discoveryError));
+      if (discoveryHandled) return response.status(202).json({ accepted: true, signals: 0 });
+      throw discoveryError;
     }
     const count = await finalizeActorRun(details.actorRunId, details.datasetId);
     return response.status(202).json({ accepted: true, posts: count });
