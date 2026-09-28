@@ -16,9 +16,40 @@ function required(name: string): string {
   return value;
 }
 
+async function isPostgrestClockSkew(response: Response): Promise<boolean> {
+  if (response.status !== 401) return false;
+  try {
+    const body: unknown = await response.clone().json();
+    return typeof body === "object" && body !== null && "code" in body && body.code === "PGRST303"
+      && "message" in body && body.message === "JWT issued at future";
+  } catch {
+    return false;
+  }
+}
+
+// Supabase can briefly reject its own service-key JWT while PostgREST's clock
+// catches up. Retry only that specific rejection; other 401s remain failures.
+export async function fetchWithPostgrestClockRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  request = fetch,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<Response> {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (!url.includes("/rest/v1/")) return request(input, init);
+  const retryableRequest = new Request(input, init);
+  for (const delay of [1_000, 3_000]) {
+    const response = await request(retryableRequest.clone());
+    if (!await isPostgrestClockSkew(response)) return response;
+    await wait(delay);
+  }
+  return request(retryableRequest.clone());
+}
+
 export function adminClient() {
   return createClient(required("SUPABASE_URL"), required("SUPABASE_SECRET_KEY"), {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: fetchWithPostgrestClockRetry },
   });
 }
 
