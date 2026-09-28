@@ -3,6 +3,7 @@ import { canonicalLinkedInProfileUrl } from "../../src/linkedin.js";
 import { canonicalSocialProfileUrl } from "../../src/social.js";
 import type { DiscoveryCandidate, DiscoveryStatus } from "../../src/types.js";
 import { adminClient, publicAppUrl } from "./supabase.js";
+import { actorChain, adapterById, type ActorAdapter } from "./actors.js";
 
 export type DiscoveryKind = "posts" | "comments" | "reactions";
 type DiscoveryMode = "initial" | "incremental";
@@ -117,23 +118,26 @@ export function xSignalsFromItem(value: unknown, sourceProfileUrl: string): Arra
       occurred_at: occurredAt,
     });
   }
-  if (value.isRetweet === true) add(value.retweetedAuthor, "repost");
-  if (value.isQuote === true) add(value.quotedAuthor ?? nested(nested(value, "quotedTweet"), "author"), "repost");
+  if (value.isRetweet === true) add(value.retweetedAuthor ?? nested(nested(value, "retweet"), "author") ?? nested(nested(value, "retweeted_tweet"), "author"), "repost");
+  if (value.isQuote === true || value.isQuoteStatus === true) add(value.quotedAuthor ?? nested(nested(value, "quote"), "author") ?? nested(nested(value, "quotedTweet"), "author") ?? nested(nested(value, "quoted_tweet"), "author"), "repost");
   if (value.isReply === true) add(value.inReplyToUsername ?? value.inReplyToUserName ?? value.inReplyToScreenName, "comment");
   // Mention entities are documented by the actor. Do not infer a reply target
   // from their order, or mistake likes received for the user's own likes.
   if (Array.isArray(value.mentions)) for (const mention of value.mentions) add(mention, "reaction");
+  const entities = nested(value, "entities");
+  if (Array.isArray(entities?.user_mentions)) for (const mention of entities.user_mentions) add(mention, "reaction");
   return [...signals.values()];
 }
 
-export function actorInput(kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode): Record<string, unknown> {
-  if (canonicalSocialProfileUrl(profileUrl)?.platform === "x") return {
-    twitterHandles: [new URL(profileUrl).pathname.slice(1)],
-    maxTweetsPerProfile: 80,
-    includeReplies: true, includeRetweets: true, includeAuthorProfile: true,
-    incremental: false,
-    since: new Date(Date.now() - (mode === "incremental" ? 30 : 365) * 86_400_000).toISOString(),
-  };
+export function actorInput(kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode, adapter?: ActorAdapter): Record<string, unknown> {
+  if (canonicalSocialProfileUrl(profileUrl)?.platform === "x") {
+    const handle = new URL(profileUrl).pathname.slice(1);
+    const start = new Date(Date.now() - (mode === "incremental" ? 30 : 365) * 86_400_000).toISOString();
+    const selected = adapter ?? actorChain("x")[0];
+    if (selected.id === "apidojo~tweet-scraper") return { twitterHandles: [handle], maxItems: 80, start: start.slice(0, 10), sort: "Latest" };
+    return { twitterHandles: [handle], maxItems: 80, maxItemsPerTarget: 80,
+      since: start.replace("T", "_").replace(/\.\d{3}Z$/, "_UTC") };
+  }
   const postedLimit = mode === "incremental" ? "month" : "year";
   if (kind === "posts") return {
     targetUrls: [profileUrl], maxPosts: 20, includeReposts: true, includeQuotePosts: true,
@@ -142,14 +146,14 @@ export function actorInput(kind: DiscoveryKind, profileUrl: string, mode: Discov
   return { profiles: [profileUrl], maxItems: 30, postedLimit };
 }
 
-function actorId(kind: DiscoveryKind, profileUrl: string): string {
-  if (canonicalSocialProfileUrl(profileUrl)?.platform === "x") return process.env.APIFY_X_ACTOR_ID || "nick.cheng~x-twitter-profile-tweets-scraper";
+function actorId(kind: DiscoveryKind, profileUrl: string, adapter?: ActorAdapter): string {
+  if (canonicalSocialProfileUrl(profileUrl)?.platform === "x") return (adapter ?? actorChain("x")[0]).id;
   if (kind === "comments") return process.env.APIFY_LINKEDIN_COMMENTS_ACTOR_ID || "harvestapi~linkedin-profile-comments";
   if (kind === "reactions") return process.env.APIFY_LINKEDIN_REACTIONS_ACTOR_ID || "harvestapi~linkedin-profile-reactions";
-  return process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
+  return (adapter ?? actorChain("linkedin")[0]).id;
 }
 
-export async function startDiscoveryActor(request: VercelRequest, actorRowId: string, kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode) {
+export async function startDiscoveryActor(request: VercelRequest, actorRowId: string, kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode, adapter?: ActorAdapter) {
   const token = process.env.APIFY_API_TOKEN;
   const secret = process.env.APIFY_WEBHOOK_SECRET;
   if (!token || !secret) throw new Error("Apify is not configured.");
@@ -162,22 +166,41 @@ export async function startDiscoveryActor(request: VercelRequest, actorRowId: st
     payloadTemplate: '{"eventType":{{eventType}},"resource":{{resource}}}',
     headersTemplate: JSON.stringify({ Authorization: `Bearer ${secret}` }),
   }])).toString("base64");
-  const url = new URL(`https://api.apify.com/v2/acts/${actorId(kind, profileUrl)}/runs`);
+  const selectedId = actorId(kind, profileUrl, adapter);
+  const url = new URL(`https://api.apify.com/v2/acts/${selectedId}/runs`);
   url.searchParams.set("webhooks", webhooks);
-  const actorResponse = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(actorInput(kind, profileUrl, mode)),
-  });
+  let actorResponse: Response;
+  try {
+    actorResponse = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(actorInput(kind, profileUrl, mode, adapter)),
+    });
+  } catch (error) {
+    actorResponse = new Response(JSON.stringify({ error: { message: error instanceof Error ? error.message : "Apify request failed." } }), { status: 503 });
+  }
   const payload: unknown = await actorResponse.json();
   const data = isRecord(payload) ? nested(payload, "data") : undefined;
   const actorRunId = stringValue(data, "id");
   if (!actorResponse.ok || !actorRunId) {
     const message = stringValue(nested(isRecord(payload) ? payload : undefined, "error"), "message") ?? `Apify could not scan ${kind}.`;
-    await db.from("discovery_actor_runs").update({ status: "failed", finished_at: new Date().toISOString(), error: message }).eq("id", actorRowId);
+    const { data: failedRow, error: failedRowError } = await db.from("discovery_actor_runs")
+      .update({ status: "failed", finished_at: new Date().toISOString(), error: message, actor_id: selectedId, mode, callback_url: callbackUrl })
+      .eq("id", actorRowId).select("discovery_run_id, attempt").single();
+    if (failedRowError) throw failedRowError;
+    const next = canonicalSocialProfileUrl(profileUrl)?.platform === "x" ? actorChain("x")[Number(failedRow.attempt) || 1] : null;
+    if (next) {
+      const { data: fallback, error: fallbackError } = await db.from("discovery_actor_runs").insert({
+        discovery_run_id: failedRow.discovery_run_id, kind, profile_url: profileUrl, mode,
+        actor_id: next.id, attempt: (Number(failedRow.attempt) || 1) + 1, callback_url: callbackUrl, status: "starting",
+      }).select("id").single();
+      if (fallbackError) throw fallbackError;
+      return startDiscoveryActor(request, fallback.id, kind, profileUrl, mode, next);
+    }
     throw new Error(message);
   }
-  const { error: updateError } = await db.from("discovery_actor_runs").update({ status: "running", actor_run_id: actorRunId }).eq("id", actorRowId);
+  const { error: updateError } = await db.from("discovery_actor_runs").update({ status: "running", actor_run_id: actorRunId,
+    actor_id: selectedId, mode, callback_url: callbackUrl }).eq("id", actorRowId);
   if (updateError) throw updateError;
   return actorRunId;
 }
@@ -257,12 +280,31 @@ export async function finishDiscoveryRun(discoveryRunId: string): Promise<void> 
 export async function failDiscoveryActor(actorRunId: string, message: string): Promise<boolean> {
   const db = adminClient();
   const { data: actor, error } = await db.from("discovery_actor_runs")
-    .update({ status: "failed", finished_at: new Date().toISOString(), error: message })
-    .eq("actor_run_id", actorRunId)
-    .select("discovery_run_id")
-    .maybeSingle();
+    .select("id, discovery_run_id, kind, profile_url, mode, attempt, callback_url, status")
+    .eq("actor_run_id", actorRunId).maybeSingle();
   if (error) throw error;
   if (!actor) return false;
+  if (actor.status === "failed" || actor.status === "succeeded") return true;
+  const { error: updateError } = await db.from("discovery_actor_runs")
+    .update({ status: "failed", finished_at: new Date().toISOString(), error: message }).eq("id", actor.id);
+  if (updateError) throw updateError;
+  if (canonicalSocialProfileUrl(actor.profile_url)?.platform === "x") {
+    const chain = actorChain("x");
+    const attempt = Number(actor.attempt) || 1;
+    const next = chain[attempt];
+    if (next) {
+      const { data: fallback, error: createError } = await db.from("discovery_actor_runs").insert({
+        discovery_run_id: actor.discovery_run_id, kind: actor.kind, profile_url: actor.profile_url,
+        mode: actor.mode, actor_id: next.id, attempt: attempt + 1, callback_url: actor.callback_url, status: "starting",
+      }).select("id").single();
+      if (createError) throw createError;
+      const base = (actor.callback_url ?? process.env.APP_BASE_URL ?? "").replace(/\/api\/apify-webhook$/, "");
+      if (!base) throw new Error("Missing callback URL for discovery fallback.");
+      const request = { headers: { host: new URL(base).host } } as VercelRequest;
+      try { await startDiscoveryActor(request, fallback.id, actor.kind, actor.profile_url, actor.mode, next); }
+      catch (startError) { await db.from("discovery_actor_runs").update({ status: "failed", finished_at: new Date().toISOString(), error: String(startError) }).eq("id", fallback.id); }
+    }
+  }
   await finishDiscoveryRun(actor.discovery_run_id);
   return true;
 }
@@ -270,7 +312,7 @@ export async function failDiscoveryActor(actorRunId: string, message: string): P
 export async function finalizeDiscoveryActor(actorRunId: string, datasetId: string): Promise<number | null> {
   const db = adminClient();
   const { data: actor, error: actorError } = await db.from("discovery_actor_runs")
-    .select("id, discovery_run_id, kind, profile_url, discovery_runs(profile_url)")
+    .select("id, discovery_run_id, kind, profile_url, actor_id, discovery_runs(profile_url)")
     .eq("actor_run_id", actorRunId)
     .maybeSingle();
   if (actorError) throw actorError;
@@ -287,6 +329,11 @@ export async function finalizeDiscoveryActor(actorRunId: string, datasetId: stri
   if (!datasetResponse.ok) throw new Error(`Could not fetch discovery results (${datasetResponse.status}).`);
   const payload: unknown = await datasetResponse.json();
   if (!Array.isArray(payload)) throw new Error("Apify returned unexpected discovery results.");
+  const adapter = typeof actor.actor_id === "string" ? adapterById(actor.actor_id) : null;
+  if (canonicalSocialProfileUrl(sourceProfileUrl)?.platform === "x" && (payload.length === 0 || payload.every((item) => adapter?.isErrorItem(item)))) {
+    await failDiscoveryActor(actorRunId, payload.length === 0 ? "Actor returned no discovery items." : "Actor returned only error records.");
+    return 0;
+  }
   const signals: Signal[] = payload.flatMap((item, index) => {
     if (canonicalSocialProfileUrl(sourceProfileUrl)?.platform === "x") {
       return xSignalsFromItem(item, sourceProfileUrl).map((signal) => ({ discovery_run_id: actor.discovery_run_id, ...signal }));

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { actorInput, rankSignals, xSignalsFromItem } from "./discovery.js";
+import apidojo from "./__fixtures__/apidojo-tweets.json";
 
 describe("rankSignals", () => {
   it("aggregates evidence and favors comments over lightweight reactions", () => {
@@ -32,12 +33,19 @@ describe("X discovery", () => {
 
   it("requests replies and reposts without consuming shared feed refresh state", () => {
     expect(actorInput("posts", source, "initial")).toMatchObject({
-      twitterHandles: ["reader"], includeReplies: true, includeRetweets: true,
-      incremental: false, maxTweetsPerProfile: 80,
+      twitterHandles: ["reader"], maxItems: 80, sort: "Latest",
     });
     expect(actorInput("posts", source, "initial")).not.toHaveProperty("stateStoreName");
+    expect(actorInput("posts", source, "initial")).toHaveProperty("start");
     expect(actorInput("comments", "https://www.linkedin.com/in/reader", "initial"))
       .toEqual({ profiles: ["https://www.linkedin.com/in/reader"], maxItems: 30, postedLimit: "year" });
+  });
+
+  it("extracts signals from the captured apidojo dataset", () => {
+    const signals = apidojo.flatMap((item) => xSignalsFromItem(item, "https://x.com/garrytan"));
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.some((signal) => signal.signal_type === "repost")).toBe(true);
+    expect(signals.some((signal) => signal.signal_type === "reaction")).toBe(true);
   });
 
   it("deduplicates mentions, excludes self, and preserves stronger reply evidence", () => {
@@ -63,6 +71,14 @@ describe("X discovery", () => {
   it("does not assume the first mentioned person is the reply target", () => {
     const signals = xSignalsFromItem({ ...tweet, isReply: true, mentions: [{ userName: "builder" }] }, source);
     expect(rankSignals(signals)[0]).toMatchObject({ comments: 0, reason: "1 mention" });
+  });
+
+  it("reads apidojo quoted authors and mention entities", () => {
+    const signals = xSignalsFromItem({ ...tweet, author: { userName: "reader" }, authorUserName: undefined,
+      isQuote: true, quote: { author: { userName: "builder" } },
+      entities: { user_mentions: [{ screen_name: "other" }] },
+    }, source);
+    expect(signals.map((signal) => signal.signal_type)).toEqual(["repost", "reaction"]);
   });
 
   it("ignores malformed records, profile rows, and other users' activity", () => {

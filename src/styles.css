@@ -83,6 +83,7 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
 .notice { position: relative; display: flex; justify-content: space-between; align-items: start; gap: 1rem; margin-top: 1rem; padding: 0.85rem 1rem; border-left: 3px solid var(--accent); background: #e6edf9; font-size: 0.84rem; line-height: 1.45; }
 .notice.error { border-left-color: var(--danger); background: #f7e8e4; color: #6d281e; }
 .notice button { border: 0; padding: 0; background: transparent; color: currentColor; font-size: 1.25rem; line-height: 1; cursor: pointer; }
+.refresh-warning { margin-top: 1rem; padding: 0.8rem 1rem; border: 1px solid #d8c995; background: #fff9e7; color: #615017; font-size: 0.76rem; line-height: 1.45; }
 .refresh-failure { display: flex; justify-content: space-between; align-items: center; gap: 1.25rem; margin-top: 1rem; padding: 1rem; border: 1px solid #e3aaa1; border-left: 4px solid var(--danger); background: #fff1ee; color: #6d281e; }
 .refresh-failure > div { display: grid; gap: 0.2rem; }
 .refresh-failure strong { font-size: 0.82rem; }

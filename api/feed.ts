@@ -96,27 +96,21 @@ export default async function handler(request: VercelRequest, response: VercelRe
       refreshRows = [(await db.from("refresh_runs").select(refreshSelect).eq("id", latestRefresh.id).single()).data ?? latestRefresh];
     }
     const activeRuns = refreshRows.filter((run) => ["starting", "running"].includes(run.status));
-    const failedRun = refreshRows.find((run) => run.status === "failed");
+    const failedRun = refreshRows.find((run) => run.status === "failed" && !run.error?.startsWith("fallback:"));
+    const fallbackRun = refreshRows.find((run) => run.status === "failed" && run.error?.startsWith("fallback:"));
+    const fallbackRecovered = activeRuns.length > 0 || refreshRows.some((run) => run.status === "succeeded");
     const startedAt = refreshRows.map((run) => run.started_at).sort()[0] ?? null;
     const finishedAt = refreshRows.map((run) => run.finished_at).filter((date): date is string => Boolean(date)).sort().at(-1) ?? null;
-    let refresh: RefreshStatus = refreshRows.length ? {
-      status: activeRuns.length ? "running" : failedRun ? "failed" : "succeeded",
+    const refresh: RefreshStatus = refreshRows.length ? {
+      status: activeRuns.length ? "running" : failedRun || fallbackRun && !fallbackRecovered ? "failed" : "succeeded",
       startedAt,
       finishedAt,
-      error: failedRun?.error ?? null,
-      profileCount: refreshRows.reduce((total, run) => total + (Array.isArray(run.target_urls) ? run.target_urls.length : 0), 0),
+      error: failedRun?.error ?? fallbackRun?.error ?? null,
+      profileCount: new Set(refreshRows.flatMap((run) => Array.isArray(run.target_urls) ? run.target_urls : [])).size,
       postsReceived: refreshRows.reduce((total, run) => total + (typeof run.posts_received === "number" ? run.posts_received : 0), 0),
     } : { status: "idle", startedAt: null, finishedAt: null, error: null, profileCount: 0, postsReceived: 0 };
-    if (
-      (refresh.status === "starting" || refresh.status === "running") &&
-      refresh.startedAt &&
-      Date.parse(refresh.startedAt) < Date.now() - 3 * 60_000
-    ) {
-      const finishedAt = new Date().toISOString();
-      const error = "The refresh did not finish within three minutes. No more waiting—try it again.";
-      await db.from("refresh_runs").update({ status: "failed", finished_at: finishedAt, error }).in("id", activeRuns.map((run) => run.id));
-      refresh = { ...refresh, status: "failed", finishedAt, error };
-    }
+    // Reconciliation above asks Apify for the authoritative run state. A wall-clock
+    // cutoff here can mark a legitimately running actor failed before its webhook.
 
     const { data: posts, error: postsError } = await db
       .from("posts")

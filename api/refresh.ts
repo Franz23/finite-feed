@@ -13,14 +13,19 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const force = request.body?.force === true;
     const { data: follows, error } = await db
       .from("user_follows")
-      .select("profiles(linkedin_url, last_scraped_at, platform)")
+      .select("profiles(id, linkedin_url, last_scraped_at, platform)")
       .eq("user_id", user.id);
     if (error) throw error;
     const followRows = (follows ?? []) as Array<{
-      profiles: Array<{ linkedin_url: string; last_scraped_at: string | null; platform: "linkedin" | "x" }>;
+      profiles: Array<{ id: string; linkedin_url: string; last_scraped_at: string | null; newest_post_at?: string | null; platform: "linkedin" | "x" }>;
     }>;
     const profiles = followRows.flatMap((follow) => follow.profiles ?? []);
     if (profiles.length < 3) throw new Error("Follow at least three people before refreshing.");
+    const { data: watermarks, error: watermarkError } = await db.from("profile_post_watermarks")
+      .select("profile_id, newest_post_at").in("profile_id", profiles.map((profile) => profile.id));
+    if (watermarkError) throw watermarkError;
+    const watermarkById = new Map((watermarks ?? []).map((row) => [row.profile_id, row.newest_post_at]));
+    for (const profile of profiles) profile.newest_post_at = watermarkById.get(profile.id) ?? null;
     const staleCutoff = Date.now() - 12 * 60 * 60_000;
     let targets = force ? profiles : profiles.filter((profile) =>
       !profile.last_scraped_at || Date.parse(profile.last_scraped_at) < staleCutoff,

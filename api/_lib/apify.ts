@@ -1,194 +1,42 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { VercelRequest } from "@vercel/node";
-import { canonicalLinkedInProfileUrl } from "../../src/linkedin.js";
+import { actorChain, adapterById, chunkActorTargets, type ActorAdapter, type ActorTarget } from "./actors.js";
 import { canonicalSocialProfileUrl, type SocialPlatform } from "../../src/social.js";
-import type { PostImage, PostMedia } from "../../src/types.js";
 import { adminClient, publicAppUrl } from "./supabase.js";
-
-type ActorPost = {
-  id: string;
-  profileId: string;
-  linkedinUrl: string;
-  content: string;
-  kind: "original" | "repost" | "quote";
-  publishedAt: string;
-  likes: number;
-  comments: number;
-  reposts: number;
-  profileName: string | null;
-  profileHeadline: string | null;
-  profileAvatarUrl: string | null;
-  media: PostMedia | null;
-  platform: SocialPlatform;
-};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
 function nested(record: Record<string, unknown> | undefined, key: string): Record<string, unknown> | undefined {
-  const value = record?.[key];
-  return isRecord(value) ? value : undefined;
+  const value = record?.[key]; return isRecord(value) ? value : undefined;
 }
-
 function stringValue(record: Record<string, unknown> | undefined, key: string): string | null {
-  const value = record?.[key];
-  return typeof value === "string" && value.trim() ? value : null;
+  const value = record?.[key]; return typeof value === "string" && value.trim() ? value : null;
 }
 
-function numberValue(record: Record<string, unknown> | undefined, key: string): number {
-  const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+export type RunDecision = { outcome: "succeeded" | "failed" | "fallback"; reason: string | null };
+export function decideRunOutcome(input: {
+  apifyStatus: "SUCCEEDED" | "FAILED" | "TIMED-OUT" | "ABORTED";
+  rawItems: number; errorItems: number; posts: number;
+  targetsWithPostInLast14Days: number; attempt: number; chainLength: number;
+  missingDataset?: boolean;
+}): RunDecision {
+  const reason = input.missingDataset ? "Apify completed without a dataset."
+    : input.apifyStatus !== "SUCCEEDED" ? `Apify run ended with ${input.apifyStatus}.`
+    : input.errorItems > 0 && input.posts === 0 ? "actor returned only error records"
+    : input.rawItems === 0 && input.targetsWithPostInLast14Days > 0 ? "actor returned nothing for accounts that posted recently"
+    : null;
+  return reason ? { outcome: input.attempt < input.chainLength ? "fallback" : "failed", reason }
+    : { outcome: "succeeded", reason: null };
 }
 
-function optionalNumber(record: Record<string, unknown> | undefined, key: string): number | null {
-  const value = record?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;
-}
-
-function httpsUrl(value: unknown): string | null {
-  return typeof value === "string" && value.startsWith("https://") ? value : null;
-}
-
-function postImage(value: unknown): PostImage | null {
-  if (!isRecord(value)) return null;
-  const url = httpsUrl(value.url);
-  return url ? { url, width: optionalNumber(value, "width"), height: optionalNumber(value, "height") } : null;
-}
-
-function actorMedia(item: Record<string, unknown>): PostMedia | null {
-  const repost = nested(item, "repost");
-  const source =
-    (Array.isArray(item.postImages) && item.postImages.length > 0) || isRecord(item.postVideo) || isRecord(item.document)
-      ? item
-      : repost ?? item;
-  const images = Array.isArray(source.postImages)
-    ? source.postImages.map(postImage).filter((image): image is PostImage => image !== null).slice(0, 4)
-    : [];
-  const rawVideo = nested(source, "postVideo");
-  const videoUrl = httpsUrl(rawVideo?.videoUrl);
-  const video = videoUrl ? { url: videoUrl, thumbnailUrl: httpsUrl(rawVideo?.thumbnailUrl) } : null;
-  const rawDocument = nested(source, "document");
-  const coverPages = Array.isArray(rawDocument?.coverPages) ? rawDocument.coverPages : [];
-  const firstCover = coverPages.find(isRecord);
-  const coverUrls = Array.isArray(firstCover?.imageUrls) ? firstCover.imageUrls : [];
-  const document = rawDocument ? {
-    title: stringValue(rawDocument, "title"),
-    url: httpsUrl(rawDocument.transcribedDocumentUrl),
-    coverUrl: coverUrls.map(httpsUrl).find((url): url is string => url !== null) ?? null,
-    pageCount: optionalNumber(rawDocument, "totalPageCount"),
-  } : null;
-  return images.length > 0 || video || document ? { images, video, document } : null;
-}
-
-function findTrackedProfile(
-  item: Record<string, unknown>,
-  profiles: Map<string, { id: string; url: string }>,
-): { id: string; url: string } | null {
-  const author = nested(item, "author");
-  const repostedBy = nested(item, "repostedBy");
-  const header = nested(item, "header");
-  const query = nested(item, "query");
-  const candidates = [
-    stringValue(item, "profileUrl"), stringValue(item, "targetUrl"), stringValue(item, "profile"),
-    stringValue(author, "linkedinUrl"), stringValue(repostedBy, "linkedinUrl"),
-    stringValue(header, "imageLink"), stringValue(query, "targetUrl"),
-  ];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const canonical = canonicalLinkedInProfileUrl(candidate);
-    if (canonical && profiles.has(canonical)) return profiles.get(canonical) ?? null;
-  }
-  return null;
-}
-
-function normalizeActorPost(
-  value: unknown,
-  profiles: Map<string, { id: string; url: string }>,
-): ActorPost | null {
-  if (!isRecord(value)) return null;
-  const tracked = findTrackedProfile(value, profiles);
-  if (!tracked) return null;
-  const linkedinUrl = stringValue(value, "linkedinUrl") ?? stringValue(value, "postUrl") ?? stringValue(value, "url");
-  if (!linkedinUrl?.startsWith("https://www.linkedin.com/")) return null;
-  const postedAt = nested(value, "postedAt");
-  const repostedAt = nested(value, "repostedAt");
-  const rawDate = stringValue(repostedAt, "date") ?? stringValue(postedAt, "date") ?? stringValue(value, "publishedAt");
-  if (!rawDate || Number.isNaN(Date.parse(rawDate))) return null;
-  const engagement = nested(value, "engagement") ?? nested(value, "stats");
-  const rawType = (stringValue(value, "postType") ?? stringValue(value, "type") ?? "").toLowerCase();
-  const hasRepost = ["repost", "repostedPost", "resharedPost", "sharedPost", "repostedBy", "repostedAt"]
-    .some((key) => isRecord(value[key]));
-  const kind: ActorPost["kind"] = rawType.includes("quote") ? "quote" : rawType.includes("repost") || hasRepost ? "repost" : "original";
-  const author = nested(value, "author");
-  const avatar = nested(author, "avatar");
-  const headerImage = nested(nested(value, "header"), "image");
-  const authorCanonical = canonicalLinkedInProfileUrl(stringValue(author, "linkedinUrl") ?? "");
-  const authorIsTracked = authorCanonical === tracked.url;
-  return {
-    id: stringValue(value, "id") ?? stringValue(value, "postId") ?? linkedinUrl,
-    profileId: tracked.id,
-    linkedinUrl,
-    content: stringValue(value, "content") ?? stringValue(value, "text") ?? "",
-    kind,
-    publishedAt: new Date(rawDate).toISOString(),
-    likes: numberValue(engagement, "likes") || numberValue(engagement, "total_reactions"),
-    comments: numberValue(engagement, "comments"),
-    reposts: numberValue(engagement, "shares") || numberValue(engagement, "reposts"),
-    profileName: authorIsTracked ? stringValue(author, "name") : stringValue(nested(value, "repostedBy"), "name"),
-    profileHeadline: authorIsTracked ? stringValue(author, "info") : null,
-    profileAvatarUrl: authorIsTracked ? httpsUrl(avatar?.url) : httpsUrl(headerImage?.url),
-    media: actorMedia(value),
-    platform: "linkedin",
-  };
-}
-
-function xMedia(item: Record<string, unknown>): PostMedia | null {
-  const entries = Array.isArray(item.media) ? item.media.filter(isRecord) : [];
-  const images = entries.flatMap((entry) => {
-    const type = (stringValue(entry, "type") ?? "").toLowerCase();
-    const url = httpsUrl(entry.url) ?? httpsUrl(entry.mediaUrl) ?? httpsUrl(entry.media_url_https);
-    return type === "photo" && url ? [{ url, width: optionalNumber(entry, "width"), height: optionalNumber(entry, "height") }] : [];
-  }).slice(0, 4);
-  const videoEntry = entries.find((entry) => ["video", "animated_gif"].includes((stringValue(entry, "type") ?? "").toLowerCase()));
-  const videoUrl = httpsUrl(videoEntry?.videoUrl) ?? httpsUrl(videoEntry?.url);
-  const video = videoUrl ? {
-    url: videoUrl,
-    thumbnailUrl: httpsUrl(videoEntry?.previewImageUrl) ?? httpsUrl(videoEntry?.thumbnailUrl),
-  } : null;
-  return images.length > 0 || video ? { images, video, document: null } : null;
-}
-
-function normalizeXPost(
-  value: unknown,
-  profiles: Map<string, { id: string; url: string }>,
-): ActorPost | null {
-  if (!isRecord(value) || value.isReply === true) return null;
-  const username = stringValue(value, "authorUserName") ?? stringValue(nested(value, "author"), "userName") ?? stringValue(nested(value, "author"), "username");
-  const canonical = username ? canonicalSocialProfileUrl(`https://x.com/${username}`) : null;
-  const tracked = canonical ? profiles.get(canonical.url) : null;
-  if (!tracked) return null;
-  const id = stringValue(value, "id") ?? stringValue(value, "tweetId");
-  const postUrl = stringValue(value, "url") ?? (id ? `${tracked.url}/status/${id}` : null);
-  const rawDate = stringValue(value, "createdAt");
-  if (!id || !postUrl || !rawDate || Number.isNaN(Date.parse(rawDate))) return null;
-  const author = nested(value, "author");
-  return {
-    id: `x:${id}`,
-    profileId: tracked.id,
-    linkedinUrl: postUrl,
-    content: stringValue(value, "text") ?? "",
-    kind: value.isQuote === true ? "quote" : value.isRetweet === true ? "repost" : "original",
-    publishedAt: new Date(rawDate).toISOString(),
-    likes: numberValue(value, "likeCount"),
-    comments: numberValue(value, "replyCount"),
-    reposts: numberValue(value, "retweetCount") + numberValue(value, "quoteCount"),
-    profileName: stringValue(author, "name") ?? username,
-    profileHeadline: stringValue(author, "description"),
-    profileAvatarUrl: httpsUrl(author?.profilePicture),
-    media: xMedia(value),
-    platform: "x",
-  };
+function webhookConfig(callbackUrl: string, secret: string): string {
+  return Buffer.from(JSON.stringify([{
+    eventTypes: ["ACTOR.RUN.SUCCEEDED", "ACTOR.RUN.FAILED", "ACTOR.RUN.TIMED_OUT", "ACTOR.RUN.ABORTED"],
+    requestUrl: callbackUrl,
+    payloadTemplate: '{"eventType":{{eventType}},"resource":{{resource}}}',
+    headersTemplate: JSON.stringify({ Authorization: `Bearer ${secret}` }),
+  }])).toString("base64");
 }
 
 export async function startActorRun(
@@ -198,91 +46,90 @@ export async function startActorRun(
   since: string,
   platform: SocialPlatform = "linkedin",
   batchId?: string,
-) {
+  adapter: ActorAdapter = actorChain(platform)[0],
+  attempt = 1,
+): Promise<string[]> {
   const token = process.env.APIFY_API_TOKEN;
   const secret = process.env.APIFY_WEBHOOK_SECRET;
   if (!token || !secret) throw new Error("Apify is not configured.");
-  const db = adminClient();
-  const { data: run, error: createError } = await db.from("refresh_runs").insert({
-    user_id: userId, status: "starting", target_urls: targetUrls, platform, batch_id: batchId, started_at: new Date().toISOString(),
-  }).select("id").single();
-  if (createError) throw createError;
   const callbackUrl = `${publicAppUrl(request)}/api/apify-webhook`;
   if (!callbackUrl.startsWith("https://")) throw new Error("A public APP_BASE_URL is required for refreshes.");
-  const webhooks = Buffer.from(JSON.stringify([{
-    eventTypes: ["ACTOR.RUN.SUCCEEDED", "ACTOR.RUN.FAILED", "ACTOR.RUN.TIMED_OUT", "ACTOR.RUN.ABORTED"],
-    requestUrl: callbackUrl,
-    payloadTemplate: '{"eventType":{{eventType}},"resource":{{resource}}}',
-    headersTemplate: JSON.stringify({ Authorization: `Bearer ${secret}` }),
-  }])).toString("base64");
-  const actorId = platform === "x"
-    ? process.env.APIFY_X_ACTOR_ID || "nick.cheng~x-twitter-profile-tweets-scraper"
-    : process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
-  const actorUrl = new URL(`https://api.apify.com/v2/acts/${actorId}/runs`);
-  actorUrl.searchParams.set("webhooks", webhooks);
-  const actorResponse = await fetch(actorUrl, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(platform === "x" ? {
-      twitterHandles: targetUrls.map((url) => new URL(url).pathname.split("/").filter(Boolean)[0]),
-      maxTweetsPerProfile: 20,
-      since,
-      incremental: true,
-      stateStoreName: "finite-feed-x-v1",
-      includeReplies: false,
-      includeRetweets: true,
-      includeAuthorProfile: true,
-    } : {
-      targetUrls, maxPosts: 0,
-      postedLimitDate: since,
-      includeReposts: true, includeQuotePosts: true, scrapeComments: false, scrapeReactions: false,
-    }),
-  });
-  const payload: unknown = await actorResponse.json();
-  const data = isRecord(payload) ? nested(payload, "data") : undefined;
-  const actorRunId = stringValue(data, "id");
-  if (!actorResponse.ok || !actorRunId) {
-    const message = stringValue(nested(isRecord(payload) ? payload : undefined, "error"), "message") ?? "Apify rejected the refresh.";
-    await db.from("refresh_runs").update({ status: "failed", finished_at: new Date().toISOString(), error: message }).eq("id", run.id);
-    throw new Error(message);
+  const db = adminClient();
+  const { data: profileRows, error: profileError } = await db.from("profiles")
+    .select("id, linkedin_url").in("linkedin_url", targetUrls);
+  if (profileError) throw profileError;
+  const profileByUrl = new Map((profileRows ?? []).map((row) => [row.linkedin_url as string, row.id as string]));
+  const targets: ActorTarget[] = targetUrls.map((url) => ({
+    url, handle: new URL(url).pathname.split("/").filter(Boolean)[0], profileId: profileByUrl.get(url) ?? "",
+  }));
+  const runIds: string[] = [];
+  for (const chunk of chunkActorTargets(targets, adapter)) {
+    const chunkUrls = chunk.map((target) => target.url);
+    const { data: run, error: createError } = await db.from("refresh_runs").insert({
+      user_id: userId, status: "starting", target_urls: chunkUrls, platform, batch_id: batchId,
+      actor_id: adapter.id, attempt, since_iso: since, callback_url: callbackUrl,
+      started_at: new Date().toISOString(),
+    }).select("id").single();
+    if (createError) throw createError;
+    const actorUrl = new URL(`https://api.apify.com/v2/acts/${adapter.id}/runs`);
+    actorUrl.searchParams.set("webhooks", webhookConfig(callbackUrl, secret));
+    let response: Response;
+    try {
+      response = await fetch(actorUrl, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(adapter.buildInput(chunk, since)),
+      });
+    } catch (error) {
+      response = new Response(JSON.stringify({ error: { message: error instanceof Error ? error.message : "Apify request failed." } }), { status: 503 });
+    }
+    const payload: unknown = await response.json();
+    const data = isRecord(payload) ? nested(payload, "data") : undefined;
+    const actorRunId = stringValue(data, "id");
+    if (!response.ok || !actorRunId) {
+      const message = stringValue(nested(isRecord(payload) ? payload : undefined, "error"), "message") ?? "Apify rejected the refresh.";
+      const next = actorChain(platform)[attempt];
+      await db.from("refresh_runs").update({ status: "failed", finished_at: new Date().toISOString(),
+        error: next ? `fallback: ${message}` : message }).eq("id", run.id);
+      if (next) {
+        runIds.push(...await startActorRun(request, chunkUrls, userId, since, platform, batchId, next, attempt + 1));
+        continue;
+      }
+      throw new Error(message);
+    }
+    const { error: updateError } = await db.from("refresh_runs").update({ status: "running", actor_run_id: actorRunId }).eq("id", run.id);
+    if (updateError) throw updateError;
+    runIds.push(actorRunId);
   }
-  const { error: updateError } = await db.from("refresh_runs").update({ status: "running", actor_run_id: actorRunId }).eq("id", run.id);
-  if (updateError) throw updateError;
-  return actorRunId;
+  return runIds;
 }
 
-export async function ingestDataset(datasetId: string, platform: SocialPlatform = "linkedin"): Promise<number> {
+export async function ingestDataset(datasetId: string, adapter: ActorAdapter): Promise<{ rawItems: number; errorItems: number; posts: number }> {
   const token = process.env.APIFY_API_TOKEN;
   if (!token) throw new Error("Apify is not configured.");
   const db = adminClient();
-  const { data: profileRows, error: profileError } = await db.from("profiles").select("id, linkedin_url, platform").eq("platform", platform).limit(5000);
+  const { data: profileRows, error: profileError } = await db.from("profiles").select("id, linkedin_url").eq("platform", adapter.platform).limit(5000);
   if (profileError) throw profileError;
-  const typedProfiles = (profileRows ?? []) as Array<{ id: string; linkedin_url: string }>;
-  const profiles = new Map<string, { id: string; url: string }>(typedProfiles.map((profile) => [profile.linkedin_url, { id: profile.id, url: profile.linkedin_url }]));
+  const profiles = new Map<string, { id: string; url: string }>((profileRows ?? []).map((profile) => {
+    const canonical = canonicalSocialProfileUrl(profile.linkedin_url);
+    return [canonical?.url ?? profile.linkedin_url, { id: profile.id, url: profile.linkedin_url }];
+  }));
   const datasetUrl = new URL(`https://api.apify.com/v2/datasets/${datasetId}/items`);
-  datasetUrl.searchParams.set("clean", "true");
-  datasetUrl.searchParams.set("format", "json");
+  datasetUrl.searchParams.set("clean", "true"); datasetUrl.searchParams.set("format", "json");
   datasetUrl.searchParams.set("limit", "1000");
   const response = await fetch(datasetUrl, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) throw new Error(`Could not fetch Apify dataset (${response.status}).`);
   const payload: unknown = await response.json();
   if (!Array.isArray(payload)) throw new Error("Apify returned an unexpected dataset shape.");
-  const candidates = payload.map((item) => platform === "x" ? normalizeXPost(item, profiles) : normalizeActorPost(item, profiles)).filter((post): post is ActorPost => post !== null);
+  const errorItems = payload.filter((item) => adapter.isErrorItem(item)).length;
+  const candidates = payload.filter((item) => !adapter.isErrorItem(item))
+    .map((item) => adapter.normalize(item, profiles)).filter((post) => post !== null);
   const uniqueByUrl = [...new Map(candidates.map((post) => [post.linkedinUrl, post])).values()];
-  if (uniqueByUrl.length === 0) return 0;
-  const { data: existingPosts, error: existingError } = await db
-    .from("posts")
-    .select("id, linkedin_url")
+  if (uniqueByUrl.length === 0) return { rawItems: payload.length, errorItems, posts: 0 };
+  const { data: existingPosts, error: existingError } = await db.from("posts").select("id, linkedin_url")
     .in("linkedin_url", uniqueByUrl.map((post) => post.linkedinUrl));
   if (existingError) throw existingError;
-  const existingIdByUrl = new Map(
-    ((existingPosts ?? []) as Array<{ id: string; linkedin_url: string }>).map((post) => [post.linkedin_url, post.id]),
-  );
-  const newPostCount = uniqueByUrl.filter((post) => !existingIdByUrl.has(post.linkedinUrl)).length;
-  const normalized = uniqueByUrl.map((post) => ({
-    ...post,
-    id: existingIdByUrl.get(post.linkedinUrl) ?? post.id,
-  }));
+  const existingIdByUrl = new Map((existingPosts ?? []).map((post) => [post.linkedin_url, post.id]));
+  const normalized = uniqueByUrl.map((post) => ({ ...post, id: existingIdByUrl.get(post.linkedinUrl) ?? post.id }));
   const now = new Date().toISOString();
   const { error: postsError } = await db.from("posts").upsert(normalized.map((post) => ({
     id: post.id, profile_id: post.profileId, linkedin_url: post.linkedinUrl, content: post.content,
@@ -290,54 +137,72 @@ export async function ingestDataset(datasetId: string, platform: SocialPlatform 
     reposts: post.reposts, media: post.media, platform: post.platform, last_observed_at: now,
   })), { onConflict: "id" });
   if (postsError) throw postsError;
-  const profileUpdates = new Map<string, ActorPost>();
-  for (const post of normalized) {
-    const previous = profileUpdates.get(post.profileId);
-    profileUpdates.set(post.profileId, {
-      ...post,
-      profileName: post.profileName ?? previous?.profileName ?? null,
-      profileHeadline: post.profileHeadline ?? previous?.profileHeadline ?? null,
-      profileAvatarUrl: post.profileAvatarUrl ?? previous?.profileAvatarUrl ?? null,
-    });
-  }
+  const profileUpdates = new Map<string, typeof normalized[number]>();
+  for (const post of normalized) profileUpdates.set(post.profileId, post);
   await Promise.all([...profileUpdates.values()].map(async (post) => {
-    const values: Record<string, string> = { last_scraped_at: now, updated_at: now };
+    const values: Record<string, string> = { updated_at: now };
     if (post.profileName) values.name = post.profileName;
     if (post.profileHeadline) values.headline = post.profileHeadline;
     if (post.profileAvatarUrl) values.avatar_url = post.profileAvatarUrl;
-    const { error: updateError } = await db.from("profiles").update(values).eq("id", post.profileId);
-    if (updateError) throw updateError;
+    const { error } = await db.from("profiles").update(values).eq("id", post.profileId);
+    if (error) throw error;
   }));
-  return newPostCount;
+  return { rawItems: payload.length, errorItems, posts: uniqueByUrl.length };
 }
 
-export async function finalizeActorRun(actorRunId: string, datasetId: string): Promise<number> {
+export async function finalizeActorRun(
+  actorRunId: string, datasetId: string | null, apifyStatus: "SUCCEEDED" | "FAILED" | "TIMED-OUT" | "ABORTED" = "SUCCEEDED",
+): Promise<number> {
   const db = adminClient();
-  const now = new Date().toISOString();
-  const { data: refreshRun, error: refreshError } = await db
-    .from("refresh_runs")
-    .select("target_urls, platform, started_at")
-    .eq("actor_run_id", actorRunId)
-    .maybeSingle();
-  if (refreshError) throw refreshError;
-  const platform: SocialPlatform = refreshRun?.platform === "x" ? "x" : "linkedin";
-  const checkedThrough = typeof refreshRun?.started_at === "string" ? refreshRun.started_at : now;
-  const count = await ingestDataset(datasetId, platform);
-  const targetUrls = Array.isArray(refreshRun?.target_urls)
-    ? refreshRun.target_urls.filter((url: unknown): url is string => typeof url === "string")
-    : [];
-  if (targetUrls.length > 0) {
-    const { error: profileError } = await db
-      .from("profiles")
-      .update({ last_scraped_at: checkedThrough, updated_at: now })
-      .in("linkedin_url", targetUrls);
-    if (profileError) throw profileError;
+  const { data: run, error: runError } = await db.from("refresh_runs")
+    .select("id, user_id, target_urls, platform, batch_id, actor_id, attempt, since_iso, callback_url, started_at, status")
+    .eq("actor_run_id", actorRunId).maybeSingle();
+  if (runError) throw runError;
+  if (!run || run.status === "succeeded" || run.status === "failed") return 0;
+  const platform: SocialPlatform = run.platform === "x" ? "x" : "linkedin";
+  const adapter = adapterById(run.actor_id);
+  if (!adapter) throw new Error(`Unknown stored actor adapter: ${run.actor_id}`);
+  const chain = actorChain(platform);
+  const attempt = Number(run.attempt) || 1;
+  const targetUrls = Array.isArray(run.target_urls) ? run.target_urls.filter((url: unknown): url is string => typeof url === "string") : [];
+  const stats = apifyStatus === "SUCCEEDED" && datasetId ? await ingestDataset(datasetId, adapter) : { rawItems: 0, errorItems: 0, posts: 0 };
+  const { data: profileRows, error: profileError } = await db.from("profiles").select("id").in("linkedin_url", targetUrls);
+  if (profileError) throw profileError;
+  const ids = (profileRows ?? []).map((row) => row.id);
+  let targetsWithPostInLast14Days = 0;
+  if (ids.length) {
+    const { data: recent, error: recentError } = await db.from("posts").select("profile_id")
+      .in("profile_id", ids).gte("published_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
+    if (recentError) throw recentError;
+    targetsWithPostInLast14Days = new Set((recent ?? []).map((row) => row.profile_id)).size;
   }
-  const { error } = await db.from("refresh_runs").update({
-    status: "succeeded", finished_at: now, posts_received: count, error: null,
-  }).eq("actor_run_id", actorRunId);
-  if (error) throw error;
-  return count;
+  const decision = decideRunOutcome({ apifyStatus, ...stats, targetsWithPostInLast14Days,
+    attempt, chainLength: chain.length, missingDataset: apifyStatus === "SUCCEEDED" && !datasetId });
+  console.info(JSON.stringify({ event: "refresh_outcome", platform, actor_id: adapter.id, attempt,
+    outcome: decision.outcome, reason: decision.reason, rawItems: stats.rawItems,
+    errorItems: stats.errorItems, posts: stats.posts }));
+  const now = new Date().toISOString();
+  const { data: transitioned, error: updateError } = await db.from("refresh_runs").update({
+    status: decision.outcome === "succeeded" ? "succeeded" : "failed", finished_at: now,
+    items_received: stats.rawItems, error_items: stats.errorItems, posts_received: stats.posts,
+    error: decision.outcome === "fallback" ? `fallback: ${decision.reason}` : decision.reason,
+  }).eq("id", run.id).eq("status", "running").select("id").maybeSingle();
+  if (updateError) throw updateError;
+  if (!transitioned) return 0;
+  if (decision.outcome === "succeeded" && targetUrls.length) {
+    const checkedThrough = typeof run.started_at === "string" ? run.started_at : now;
+    const { error } = await db.from("profiles").update({ last_scraped_at: checkedThrough, updated_at: now }).in("linkedin_url", targetUrls);
+    if (error) throw error;
+  }
+  if (decision.outcome === "fallback") {
+    const next = chain[attempt];
+    if (!next) throw new Error("Fallback adapter is missing.");
+    const callbackBase = typeof run.callback_url === "string" ? run.callback_url.replace(/\/api\/apify-webhook$/, "") : process.env.APP_BASE_URL;
+    if (!callbackBase) throw new Error("Missing callback URL for actor fallback.");
+    const fallbackRequest = { headers: { host: new URL(callbackBase).host } } as VercelRequest;
+    await startActorRun(fallbackRequest, targetUrls, run.user_id, run.since_iso, platform, run.batch_id, next, attempt + 1);
+  }
+  return stats.posts;
 }
 
 export async function reconcileActorRun(actorRunId: string): Promise<"running" | "succeeded" | "failed"> {
@@ -350,18 +215,9 @@ export async function reconcileActorRun(actorRunId: string): Promise<"running" |
   const data = isRecord(payload) ? nested(payload, "data") : undefined;
   if (!response.ok || !data) throw new Error(`Could not check Apify run (${response.status}).`);
   const status = stringValue(data, "status");
-  if (status === "SUCCEEDED") {
-    const datasetId = stringValue(data, "defaultDatasetId");
-    if (!datasetId) throw new Error("Apify completed without a dataset.");
-    await finalizeActorRun(actorRunId, datasetId);
-    return "succeeded";
-  }
-  if (["FAILED", "TIMED-OUT", "ABORTED"].includes(status ?? "")) {
-    const db = adminClient();
-    await db.from("refresh_runs").update({
-      status: "failed", finished_at: new Date().toISOString(), error: `Apify run ended with ${status}.`,
-    }).eq("actor_run_id", actorRunId);
-    return "failed";
+  if (status === "SUCCEEDED" || status === "FAILED" || status === "TIMED-OUT" || status === "ABORTED") {
+    await finalizeActorRun(actorRunId, stringValue(data, "defaultDatasetId"), status);
+    return status === "SUCCEEDED" ? "succeeded" : "failed";
   }
   return "running";
 }

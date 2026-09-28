@@ -1,9 +1,13 @@
-type ScrapedTarget = { last_scraped_at: string | null };
+export type WindowTarget = { last_scraped_at: string | null; newest_post_at?: string | null };
 
-export function refreshSince(targets: ScrapedTarget[], now = Date.now()): string {
-  const timestamps = targets.map((target) => target.last_scraped_at ? Date.parse(target.last_scraped_at) : Number.NaN);
-  if (timestamps.some((timestamp) => !Number.isFinite(timestamp))) {
-    return new Date(now - 7 * 86_400_000).toISOString();
-  }
-  return new Date(Math.min(...timestamps)).toISOString();
+export function refreshSince(targets: WindowTarget[], now = Date.now()): string {
+  const fallback = now - 30 * 86_400_000;
+  const anchors = targets.map((target) => {
+    const raw = target.newest_post_at ?? target.last_scraped_at;
+    const parsed = raw ? Date.parse(raw) : Number.NaN;
+    return Number.isFinite(parsed) ? parsed : fallback;
+  });
+  const overlapHours = Number(process.env.REFRESH_OVERLAP_HOURS ?? 24);
+  if (!Number.isFinite(overlapHours) || overlapHours < 0) throw new Error("REFRESH_OVERLAP_HOURS must be a nonnegative number.");
+  return new Date(Math.min(...(anchors.length ? anchors : [fallback])) - overlapHours * 3_600_000).toISOString();
 }

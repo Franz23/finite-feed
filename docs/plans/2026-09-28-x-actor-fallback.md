@@ -68,8 +68,8 @@ Adapters to implement:
 
 - `harvestapiLinkedInPosts`: move the existing LinkedIn input builder and `normalizeActorPost` here unchanged.
   `isErrorItem`: item has `error` truthy or no post URL and no content.
-- `apidojoTweets`: input `{ twitterHandles, start: YYYY-MM-DD of (since minus 24h), maxItems: targets.length * 40, sort: "Latest" }`.
-  `maxTargetsPerRun: 25`. `isErrorItem`: `item.error === true` or `item.type === "error"` or no `id`.
+- `apidojoTweets`: input `{ twitterHandles, start: YYYY-MM-DD of the already-overlapped since timestamp, maxItems: targets.length * 40, sort: "Latest" }`.
+  `maxTargetsPerRun: 1` to avoid global-cap starvation across handles. `isErrorItem`: `item.error === true` or `item.type === "error"` or no `id`.
   `normalize`: current `normalizeXPost` logic with these changes: prefer `fullText` over `text`; for retweets, if
   `retweet.fullText` exists, use it and keep the `RT @user:` prefix behaviour consistent with today's cards; read author from
   `author.userName`; media from `extendedEntities.media[]` first, then `media[]`, then `videos[]`: photos use
@@ -210,7 +210,7 @@ and confirm a `failed` row with `error` starting `fallback:` followed by a succe
 
 Apify's public actor pages currently list [apidojo](https://apify.com/apidojo/tweet-scraper) from $0.40 per 1,000 tweets
 and [xquik](https://apify.com/xquik/x-tweet-scraper) from $0.15 per 1,000 rows.
-Check the account-specific price on each actor page in the Apify console before deploy. `maxItems = targets * 40` bounds spend per run. With ten X profiles refreshed four times a day and a 24h overlap window,
+Check the account-specific price on each actor page in the Apify console before deploy. `maxItems = targets * 40` bounds spend per run. Running apidojo once per handle adds actor startup/compute overhead but prevents its global item cap from starving later handles. With ten X profiles refreshed four times a day and a 24h overlap window,
 expect on the order of tens to a few hundred tweets per day, mostly duplicates that the upsert discards but that are still charged.
 If the invoice looks high, reduce the overlap from 24h to 6h; the 24h default is chosen for safety during the first week.
 

@@ -7,8 +7,10 @@ import { refreshSince } from "./_lib/refresh-window.js";
 import { adminClient } from "./_lib/supabase.js";
 
 type RefreshTarget = {
+  id: string;
   linkedin_url: string;
   last_scraped_at: string | null;
+  newest_post_at?: string | null;
   platform: "linkedin" | "x";
 };
 
@@ -30,7 +32,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const discoveryRunsStarted = await startDueDiscoveryRuns(request);
     const { data: follows, error: followsError } = await db
       .from("user_follows")
-      .select("profiles(linkedin_url, last_scraped_at, platform)")
+      .select("profiles(id, linkedin_url, last_scraped_at, platform)")
       .limit(5000);
     if (followsError) throw followsError;
 
@@ -38,6 +40,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const profiles = [...new Map(
       followRows.flatMap((follow) => follow.profiles ?? []).map((profile) => [profile.linkedin_url, profile]),
     ).values()];
+    if (profiles.length === 0) return response.status(200).json({ status: "fresh", profiles: 0, discoveryRunsStarted });
+    const { data: watermarks, error: watermarkError } = await db.from("profile_post_watermarks")
+      .select("profile_id, newest_post_at").in("profile_id", profiles.map((profile) => profile.id));
+    if (watermarkError) throw watermarkError;
+    const watermarkById = new Map((watermarks ?? []).map((row) => [row.profile_id, row.newest_post_at]));
+    for (const profile of profiles) profile.newest_post_at = watermarkById.get(profile.id) ?? null;
     const staleCutoff = Date.now() - 5 * 60 * 60_000;
     let targets = profiles.filter((profile) =>
       !profile.last_scraped_at || Date.parse(profile.last_scraped_at) < staleCutoff,

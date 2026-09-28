@@ -2,7 +2,6 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { finalizeActorRun, verifyWebhookSecret, webhookDetails } from "./_lib/apify.js";
 import { failDiscoveryActor, finalizeDiscoveryActor } from "./_lib/discovery.js";
 import { apiError, errorMessage, methodNotAllowed } from "./_lib/http.js";
-import { adminClient } from "./_lib/supabase.js";
 
 export const config = { maxDuration: 60 };
 
@@ -14,13 +13,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     if (!verifyWebhookSecret(provided)) return response.status(401).json({ error: "Unauthorized." });
     const details = webhookDetails(request.body);
     if (!details) throw new Error("Invalid webhook payload.");
-    const db = adminClient();
     if (details.status !== "SUCCEEDED" || !details.datasetId) {
-      const discoveryHandled = await failDiscoveryActor(details.actorRunId, `Apify run ended with ${details.status}.`);
+      const reason = details.status === "SUCCEEDED" ? "Apify completed without a dataset." : `Apify run ended with ${details.status}.`;
+      const discoveryHandled = await failDiscoveryActor(details.actorRunId, reason);
       if (discoveryHandled) return response.status(202).json({ accepted: true });
-      await db.from("refresh_runs").update({
-        status: "failed", finished_at: new Date().toISOString(), error: `Apify run ended with ${details.status}.`,
-      }).eq("actor_run_id", details.actorRunId);
+      if (["SUCCEEDED", "FAILED", "TIMED-OUT", "ABORTED"].includes(details.status)) {
+        await finalizeActorRun(details.actorRunId, details.datasetId, details.status as "SUCCEEDED" | "FAILED" | "TIMED-OUT" | "ABORTED");
+      }
       return response.status(202).json({ accepted: true });
     }
     try {
