@@ -208,8 +208,9 @@ and confirm a `failed` row with `error` starting `fallback:` followed by a succe
 
 ## Cost note
 
-apidojo charges per returned tweet; the price is not exposed on the public API, check the actor page in the Apify console before
-deploy. `maxItems = targets * 40` bounds spend per run. With ten X profiles refreshed four times a day and a 24h overlap window,
+Apify's public actor pages currently list [apidojo](https://apify.com/apidojo/tweet-scraper) from $0.40 per 1,000 tweets
+and [xquik](https://apify.com/xquik/x-tweet-scraper) from $0.15 per 1,000 rows.
+Check the account-specific price on each actor page in the Apify console before deploy. `maxItems = targets * 40` bounds spend per run. With ten X profiles refreshed four times a day and a 24h overlap window,
 expect on the order of tens to a few hundred tweets per day, mostly duplicates that the upsert discards but that are still charged.
 If the invoice looks high, reduce the overlap from 24h to 6h; the 24h default is chosen for safety during the first week.
 
