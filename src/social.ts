@@ -46,3 +46,15 @@ export function parseSocialUrls(input: string): { urls: string[]; invalid: strin
   }
   return { urls, invalid };
 }
+
+export function discoveryProfileUrls(values: unknown): string[] {
+  if (!Array.isArray(values) || values.length > 2) throw new Error("Add one LinkedIn profile and one X profile at most.");
+  const profiles = values.filter((value) => typeof value !== "string" || value.trim()).map((value) => {
+    const profile = typeof value === "string" ? canonicalSocialProfileUrl(value) : null;
+    if (!profile) throw new Error("Enter a valid LinkedIn or X profile URL.");
+    return profile;
+  });
+  if (!profiles.length) throw new Error("Add your LinkedIn profile, X profile, or both.");
+  if (new Set(profiles.map((profile) => profile.platform)).size !== profiles.length) throw new Error("Add one profile per platform.");
+  return profiles.map((profile) => profile.url);
+}

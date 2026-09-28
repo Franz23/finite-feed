@@ -1,5 +1,6 @@
 import type { VercelRequest } from "@vercel/node";
 import { canonicalLinkedInProfileUrl } from "../../src/linkedin.js";
+import { canonicalSocialProfileUrl } from "../../src/social.js";
 import type { DiscoveryCandidate, DiscoveryStatus } from "../../src/types.js";
 import { adminClient, publicAppUrl } from "./supabase.js";
 
@@ -87,7 +88,52 @@ function signalFromItem(value: unknown, kind: DiscoveryKind, sourceProfileUrl: s
   return signal ? { ...signal, source_id: sourceId } : null;
 }
 
-function actorInput(kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode): Record<string, unknown> {
+// X mentions are stored as lightweight reactions; their UI label is platform-specific.
+// Keep explicit reply/repost targets stronger than incidental mentions.
+export function xSignalsFromItem(value: unknown, sourceProfileUrl: string): Array<SignalRow & { source_id: string }> {
+  if (!isRecord(value)) return [];
+  const id = stringValue(value, "id", "tweetId");
+  if (!id || value.itemType === "profile" || value.type === "profile") return [];
+  const source = canonicalSocialProfileUrl(sourceProfileUrl);
+  if (source?.platform !== "x") return [];
+  const author = stringValue(value, "authorUserName") ?? stringValue(nested(value, "author"), "userName", "username");
+  if (!author || canonicalSocialProfileUrl(`https://x.com/${author}`)?.url !== source.url) return [];
+  const sourceUrl = source.url;
+  const occurredAt = dateValue(stringValue(value, "createdAt"));
+  const signals = new Map<string, SignalRow & { source_id: string }>();
+  function add(target: unknown, type: SignalRow["signal_type"]) {
+    const record = isRecord(target) ? target : undefined;
+    const handle = typeof target === "string" ? target : stringValue(record, "userName", "username", "screen_name");
+    if (!handle || !/^@?[a-zA-Z0-9_]{1,15}$/.test(handle)) return;
+    const profile = canonicalSocialProfileUrl(`https://x.com/${handle}`);
+    if (profile?.platform !== "x" || profile.url === sourceUrl || signals.has(profile.url)) return;
+    signals.set(profile.url, {
+      source_id: `x:${id}:${profile.url}`,
+      signal_type: type,
+      candidate_url: profile.url,
+      candidate_name: stringValue(record, "name"),
+      candidate_headline: stringValue(record, "description"),
+      candidate_avatar_url: stringValue(record, "profilePicture"),
+      occurred_at: occurredAt,
+    });
+  }
+  if (value.isRetweet === true) add(value.retweetedAuthor, "repost");
+  if (value.isQuote === true) add(value.quotedAuthor ?? nested(nested(value, "quotedTweet"), "author"), "repost");
+  if (value.isReply === true) add(value.inReplyToUsername ?? value.inReplyToUserName ?? value.inReplyToScreenName, "comment");
+  // Mention entities are documented by the actor. Do not infer a reply target
+  // from their order, or mistake likes received for the user's own likes.
+  if (Array.isArray(value.mentions)) for (const mention of value.mentions) add(mention, "reaction");
+  return [...signals.values()];
+}
+
+export function actorInput(kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode): Record<string, unknown> {
+  if (canonicalSocialProfileUrl(profileUrl)?.platform === "x") return {
+    twitterHandles: [new URL(profileUrl).pathname.slice(1)],
+    maxTweetsPerProfile: 80,
+    includeReplies: true, includeRetweets: true, includeAuthorProfile: true,
+    incremental: false,
+    since: new Date(Date.now() - (mode === "incremental" ? 30 : 365) * 86_400_000).toISOString(),
+  };
   const postedLimit = mode === "incremental" ? "month" : "year";
   if (kind === "posts") return {
     targetUrls: [profileUrl], maxPosts: 20, includeReposts: true, includeQuotePosts: true,
@@ -96,7 +142,8 @@ function actorInput(kind: DiscoveryKind, profileUrl: string, mode: DiscoveryMode
   return { profiles: [profileUrl], maxItems: 30, postedLimit };
 }
 
-function actorId(kind: DiscoveryKind): string {
+function actorId(kind: DiscoveryKind, profileUrl: string): string {
+  if (canonicalSocialProfileUrl(profileUrl)?.platform === "x") return process.env.APIFY_X_ACTOR_ID || "nick.cheng~x-twitter-profile-tweets-scraper";
   if (kind === "comments") return process.env.APIFY_LINKEDIN_COMMENTS_ACTOR_ID || "harvestapi~linkedin-profile-comments";
   if (kind === "reactions") return process.env.APIFY_LINKEDIN_REACTIONS_ACTOR_ID || "harvestapi~linkedin-profile-reactions";
   return process.env.APIFY_ACTOR_ID || "harvestapi~linkedin-profile-posts";
@@ -115,7 +162,7 @@ export async function startDiscoveryActor(request: VercelRequest, actorRowId: st
     payloadTemplate: '{"eventType":{{eventType}},"resource":{{resource}}}',
     headersTemplate: JSON.stringify({ Authorization: `Bearer ${secret}` }),
   }])).toString("base64");
-  const url = new URL(`https://api.apify.com/v2/acts/${actorId(kind)}/runs`);
+  const url = new URL(`https://api.apify.com/v2/acts/${actorId(kind, profileUrl)}/runs`);
   url.searchParams.set("webhooks", webhooks);
   const actorResponse = await fetch(url, {
     method: "POST",
@@ -138,27 +185,35 @@ export async function startDiscoveryActor(request: VercelRequest, actorRowId: st
 export async function createDiscoveryRun(
   request: VercelRequest,
   userId: string,
-  profileUrl: string,
+  profiles: string | string[],
   mode: DiscoveryMode = "initial",
 ): Promise<DiscoveryStatus> {
+  const profileUrls = Array.isArray(profiles) ? profiles : [profiles];
   const db = adminClient();
   const { data: run, error } = await db.from("discovery_runs").insert({
-    user_id: userId, profile_url: profileUrl, status: "running",
+    user_id: userId, profile_url: profileUrls[0], profile_urls: profileUrls, status: "running",
   }).select("id").single();
   if (error) {
     if (error.code === "23505") return getDiscoveryStatus(userId);
     throw error;
   }
-  const kinds: DiscoveryKind[] = ["posts", "comments", "reactions"];
+  const targets = profileUrls.flatMap((profileUrl) => {
+    const kinds: DiscoveryKind[] = canonicalSocialProfileUrl(profileUrl)?.platform === "x" ? ["posts"] : ["posts", "comments", "reactions"];
+    return kinds.map((kind) => ({ kind, profile_url: profileUrl }));
+  });
   const { data: actorRows, error: actorRowsError } = await db.from("discovery_actor_runs")
-    .insert(kinds.map((kind) => ({ discovery_run_id: run.id, kind, status: "starting" })))
-    .select("id, kind");
+    .insert(targets.map((target) => ({ discovery_run_id: run.id, ...target, status: "starting" })))
+    .select("id, kind, profile_url");
   if (actorRowsError) {
     await db.from("discovery_runs").update({ status: "failed", finished_at: new Date().toISOString(), error: actorRowsError.message }).eq("id", run.id);
     throw actorRowsError;
   }
-  await Promise.allSettled((actorRows ?? []).map((actor) =>
-    startDiscoveryActor(request, actor.id, actor.kind as DiscoveryKind, profileUrl, mode),
+  await Promise.allSettled((actorRows ?? []).map(async (actor: { id: string; kind: DiscoveryKind; profile_url: string }) => {
+      try { await startDiscoveryActor(request, actor.id, actor.kind, actor.profile_url, mode); }
+      catch (error) {
+        await db.from("discovery_actor_runs").update({ status: "failed", finished_at: new Date().toISOString(), error: error instanceof Error ? error.message : "Could not start activity scan." }).eq("id", actor.id);
+      }
+    },
   ));
   await finishDiscoveryRun(run.id);
   return getDiscoveryStatus(userId);
@@ -167,21 +222,21 @@ export async function createDiscoveryRun(
 export async function startDueDiscoveryRuns(request: VercelRequest, limit = 10): Promise<number> {
   const db = adminClient();
   const { data: runs, error } = await db.from("discovery_runs")
-    .select("user_id, profile_url, status, started_at")
+    .select("user_id, profile_url, profile_urls, status, started_at")
     .order("started_at", { ascending: false })
     .limit(5000);
   if (error) throw error;
-  const latestByUser = new Map<string, { userId: string; profileUrl: string; status: string; startedAt: string }>();
+  const latestByUser = new Map<string, { userId: string; profileUrls: string[]; status: string; startedAt: string }>();
   for (const run of runs ?? []) {
     if (!latestByUser.has(run.user_id)) latestByUser.set(run.user_id, {
-      userId: run.user_id, profileUrl: run.profile_url, status: run.status, startedAt: run.started_at,
+      userId: run.user_id, profileUrls: run.profile_urls?.length ? run.profile_urls : [run.profile_url], status: run.status, startedAt: run.started_at,
     });
   }
   const cutoff = Date.now() - 14 * 24 * 60 * 60_000;
   const due = [...latestByUser.values()].filter((run) =>
     !["starting", "running"].includes(run.status) && Date.parse(run.startedAt) <= cutoff,
   ).slice(0, limit);
-  await Promise.all(due.map((run) => createDiscoveryRun(request, run.userId, run.profileUrl, "incremental")));
+  await Promise.all(due.map((run) => createDiscoveryRun(request, run.userId, run.profileUrls, "incremental")));
   return due.length;
 }
 
@@ -215,13 +270,13 @@ export async function failDiscoveryActor(actorRunId: string, message: string): P
 export async function finalizeDiscoveryActor(actorRunId: string, datasetId: string): Promise<number | null> {
   const db = adminClient();
   const { data: actor, error: actorError } = await db.from("discovery_actor_runs")
-    .select("id, discovery_run_id, kind, discovery_runs(profile_url)")
+    .select("id, discovery_run_id, kind, profile_url, discovery_runs(profile_url)")
     .eq("actor_run_id", actorRunId)
     .maybeSingle();
   if (actorError) throw actorError;
   if (!actor) return null;
   const parent = Array.isArray(actor.discovery_runs) ? actor.discovery_runs[0] : actor.discovery_runs;
-  const sourceProfileUrl = typeof parent?.profile_url === "string" ? parent.profile_url : "";
+  const sourceProfileUrl = actor.profile_url ?? (typeof parent?.profile_url === "string" ? parent.profile_url : "");
   const token = process.env.APIFY_API_TOKEN;
   if (!token) throw new Error("Apify is not configured.");
   const url = new URL(`https://api.apify.com/v2/datasets/${datasetId}/items`);
@@ -233,6 +288,9 @@ export async function finalizeDiscoveryActor(actorRunId: string, datasetId: stri
   const payload: unknown = await datasetResponse.json();
   if (!Array.isArray(payload)) throw new Error("Apify returned unexpected discovery results.");
   const signals: Signal[] = payload.flatMap((item, index) => {
+    if (canonicalSocialProfileUrl(sourceProfileUrl)?.platform === "x") {
+      return xSignalsFromItem(item, sourceProfileUrl).map((signal) => ({ discovery_run_id: actor.discovery_run_id, ...signal }));
+    }
     const signal = signalFromItem(item, actor.kind as DiscoveryKind, sourceProfileUrl, index);
     return signal ? [{ discovery_run_id: actor.discovery_run_id, ...signal }] : [];
   });
@@ -281,10 +339,11 @@ export function rankSignals(signals: SignalRow[]): DiscoveryCandidate[] {
     candidates.set(signal.candidate_url, candidate);
   }
   return [...candidates.values()].map((candidate) => {
+    const isX = canonicalSocialProfileUrl(candidate.linkedinUrl)?.platform === "x";
     const evidence = [
-      candidate.comments ? `${candidate.comments} ${candidate.comments === 1 ? "comment" : "comments"}` : null,
+      candidate.comments ? `${candidate.comments} ${isX ? candidate.comments === 1 ? "reply" : "replies" : candidate.comments === 1 ? "comment" : "comments"}` : null,
       candidate.reposts ? `${candidate.reposts} ${candidate.reposts === 1 ? "repost" : "reposts"}` : null,
-      candidate.reactions ? `${candidate.reactions} ${candidate.reactions === 1 ? "reaction" : "reactions"}` : null,
+      candidate.reactions ? `${candidate.reactions} ${isX ? candidate.reactions === 1 ? "mention" : "mentions" : candidate.reactions === 1 ? "reaction" : "reactions"}` : null,
     ].filter((value): value is string => Boolean(value));
     return { ...candidate, score: Math.round(candidate.score * 10) / 10, reason: evidence.join(" · ") };
   }).sort((a, b) => b.score - a.score || b.comments - a.comments || b.reposts - a.reposts).slice(0, 20);
@@ -293,13 +352,13 @@ export function rankSignals(signals: SignalRow[]): DiscoveryCandidate[] {
 export async function getDiscoveryStatus(userId: string): Promise<DiscoveryStatus> {
   const db = adminClient();
   const { data: run, error } = await db.from("discovery_runs")
-    .select("id, profile_url, status, started_at, finished_at, error")
+    .select("id, profile_url, profile_urls, status, started_at, finished_at, error")
     .eq("user_id", userId)
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  if (!run) return { id: null, status: "idle", profileUrl: null, startedAt: null, finishedAt: null, error: null, candidates: [] };
+  if (!run) return { id: null, status: "idle", profileUrl: null, profileUrls: [], startedAt: null, finishedAt: null, error: null, candidates: [] };
   const { data: signals, error: signalsError } = await db.from("discovery_signals")
     .select("signal_type, candidate_url, candidate_name, candidate_headline, candidate_avatar_url, occurred_at")
     .eq("discovery_run_id", run.id);
@@ -308,6 +367,7 @@ export async function getDiscoveryStatus(userId: string): Promise<DiscoveryStatu
     id: run.id,
     status: run.status,
     profileUrl: run.profile_url,
+    profileUrls: run.profile_urls?.length ? run.profile_urls : [run.profile_url],
     startedAt: run.started_at,
     finishedAt: run.finished_at,
     error: run.error,

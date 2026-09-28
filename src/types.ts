@@ -83,6 +83,7 @@ export type DiscoveryStatus = {
   id: string | null;
   status: "idle" | "starting" | "running" | "succeeded" | "failed";
   profileUrl: string | null;
+  profileUrls: string[];
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;

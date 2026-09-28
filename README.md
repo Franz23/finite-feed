@@ -7,9 +7,9 @@ Finite Feed collects public original posts and reposts without asking for a Link
 ## Product behavior
 
 - Passwordless email-link and Google authentication through Supabase Auth
-- One-profile onboarding that scans a member's public LinkedIn posts, comments, and reactions to recommend people they already engage with
+- Separate LinkedIn and X (Twitter) profile fields that accept either or both and recommends people from public activity: LinkedIn comments, reactions, and reposts; X mentions, explicit reply targets, and reposts. X discovery uses the existing X actor, independently of feed refreshes, and does not use private likes.
 - Explainable recommendations weighted toward comments and reposts, with manual LinkedIn or X URL entry as a fallback
-- Activity-based suggestions in the People tab, refreshed every two weeks with a one-month activity window
+- Combined activity-based suggestions in the People tab with both profiles saved and refreshed every two weeks with a one-month activity window
 - Add more profiles later by pasting comma- or newline-separated URLs
 - Sort by **Most recent** or **Most engaged**
 - Inline images, videos, and document covers when the scraper returns them
@@ -74,3 +74,20 @@ corepack pnpm run build
 ## License
 
 MIT
+
+## Outbound post clicks
+
+`post_clicks` records one event per post-link activation, with authenticated user, post, server timestamp, feed/history surface, and link kind. This covers Open on LinkedIn/X, linked images, history links, and media fallbacks that lead to the post. Profile links, direct document downloads, inline video playback, and scroll-past reads are excluded. Left/keyboard/modified clicks and middle clicks are tracked without delaying navigation. Right-click menu opens, copied links, and failed tracking requests cannot be counted.
+
+Repeated clicks get separate event IDs; retrying an event ID does not double-count it. The server checks that the post belongs to the user's follows or read history. The table is service-role only and starts empty at rollout; there is no historical backfill.
+
+Example owner query (dates in Pacific time):
+
+```sql
+select u.email, (c.clicked_at at time zone 'America/Los_Angeles')::date as day,
+       count(*) as clicks, count(distinct c.post_id) as unique_posts
+from public.post_clicks c
+join auth.users u on u.id = c.user_id
+group by u.email, day
+order by day desc, u.email;
+```

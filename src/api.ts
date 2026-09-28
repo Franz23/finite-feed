@@ -64,6 +64,15 @@ export async function markSeen(ids: string[]): Promise<void> {
   );
 }
 
+export async function trackPostClick(postId: string, surface: "feed" | "history", linkKind: "post" | "image" | "document" | "video"): Promise<void> {
+  await parseResponse(await authorizedFetch("/api/click", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eventId: crypto.randomUUID(), postId, surface, linkKind }),
+    keepalive: true,
+  }));
+}
+
 export async function startRefresh(force = false): Promise<string> {
   const result = await parseResponse<{ status: string }>(await authorizedFetch("/api/refresh", {
     method: "POST",
@@ -77,10 +86,10 @@ export async function getDiscovery(signal?: AbortSignal): Promise<DiscoveryStatu
   return parseResponse<DiscoveryStatus>(await authorizedFetch("/api/discovery", { signal }));
 }
 
-export async function startDiscovery(profileUrl: string): Promise<DiscoveryStatus> {
+export async function startDiscovery(profileUrls: string[]): Promise<DiscoveryStatus> {
   return parseResponse<DiscoveryStatus>(await authorizedFetch("/api/discovery", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profileUrl }),
+    body: JSON.stringify({ profileUrls }),
   }));
 }

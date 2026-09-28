@@ -476,3 +476,8 @@ h2 { margin: 0; font-size: clamp(1.8rem, 6vw, 2.8rem); line-height: 1.03; font-w
   border-color: #1f2937;
   color: #111827;
 }
+
+.own-profile-fields { border: 0; padding: 0; margin: 0; display: grid; gap: 16px; min-width: 0; }
+.own-profile-fields legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.own-profile-fields label { display: grid; gap: 8px; }
+.own-profile-fields input { box-sizing: border-box; width: 100%; min-width: 0; }

@@ -1,3 +1,5 @@
+import { postClickHandlers } from "./post-clicks";
+import { canonicalSocialProfileUrl } from "./social";
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Session } from "@supabase/supabase-js";
@@ -129,13 +131,13 @@ function RefreshProgress({ refresh, compact = false }: { refresh: RefreshStatus;
   </section>;
 }
 
-function PostAttachment({ post }: { post: FeedPost }) {
+function PostAttachment({ post, surface }: { post: FeedPost; surface: "feed" | "history" }) {
   const media = post.media;
   const platformName = post.platform === "x" ? "X" : "LinkedIn";
   if (!media) return null;
-  if (media.video) return <div className="post-media video-media"><video controls playsInline preload="metadata" poster={media.video.thumbnailUrl ?? undefined}><source src={media.video.url} type="video/mp4" />Your browser cannot play this video. <a href={post.linkedinUrl}>Open it on {platformName}.</a></video></div>;
-  if (media.images.length > 0) return <a className={`post-media image-grid image-count-${Math.min(media.images.length, 4)}`} href={post.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`View ${post.profileName}'s post on ${platformName}`}>{media.images.map((image, index) => <img key={image.url} src={image.url} alt={media.images.length > 1 ? `Post image ${index + 1} of ${media.images.length}` : "Post image"} loading="lazy" decoding="async" />)}</a>;
-  if (media.document) return <a className="post-media document-media" href={media.document.url ?? post.linkedinUrl} target="_blank" rel="noreferrer">{media.document.coverUrl && <img src={media.document.coverUrl} alt="Document cover" loading="lazy" decoding="async" />}<span className="document-meta"><strong>{media.document.title?.trim() || "LinkedIn document"}</strong><span>{media.document.pageCount ? `${media.document.pageCount} pages` : "Open document"}</span></span></a>;
+  if (media.video) return <div className="post-media video-media"><video controls playsInline preload="metadata" poster={media.video.thumbnailUrl ?? undefined}><source src={media.video.url} type="video/mp4" />Your browser cannot play this video. <a {...postClickHandlers(post.id, surface, "video")} href={post.linkedinUrl}>Open it on {platformName}.</a></video></div>;
+  if (media.images.length > 0) return <a className={`post-media image-grid image-count-${Math.min(media.images.length, 4)}`} {...postClickHandlers(post.id, surface, "image")} href={post.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`View ${post.profileName}'s post on ${platformName}`}>{media.images.map((image, index) => <img key={image.url} src={image.url} alt={media.images.length > 1 ? `Post image ${index + 1} of ${media.images.length}` : "Post image"} loading="lazy" decoding="async" />)}</a>;
+  if (media.document) return <a {...(!media.document.url || media.document.url === post.linkedinUrl ? postClickHandlers(post.id, surface, "document") : {})} className="post-media document-media" href={media.document.url ?? post.linkedinUrl} target="_blank" rel="noreferrer">{media.document.coverUrl && <img src={media.document.coverUrl} alt="Document cover" loading="lazy" decoding="async" />}<span className="document-meta"><strong>{media.document.title?.trim() || "LinkedIn document"}</strong><span>{media.document.pageCount ? `${media.document.pageCount} pages` : "Open document"}</span></span></a>;
   return null;
 }
 
@@ -170,8 +172,8 @@ function FeedCard({ post, onSeen, archived = false }: { post: FeedPost; onSeen?:
       {post.kind !== "original" && <div className="repost-context"><Icon name="repost" /><span>{post.kind === "quote" ? "Shared with commentary by" : "Reposted by"} <strong>{post.profileName}</strong></span></div>}
       <p className={`post-copy ${isLong && !expanded ? "clamped" : ""}`}>{post.content}</p>
       {isLong && <button className="expand-post" type="button" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded}>{expanded ? "Show less" : "…see more"}</button>}
-      <PostAttachment post={post} />
-      <footer className="card-footer"><div className="metrics" aria-label={`${post.likes} reactions, ${post.comments} comments, and ${post.reposts} reposts`}><span><Icon name="heart" />{numberFormatter.format(post.likes)}</span><span><Icon name="comment" />{numberFormatter.format(post.comments)}</span>{post.reposts > 0 && <span><Icon name="repost" />{numberFormatter.format(post.reposts)}</span>}</div><a className="open-link" href={post.linkedinUrl} target="_blank" rel="noreferrer">Open on {platformName} <Icon name="arrow" /></a></footer>
+      <PostAttachment post={post} surface={archived ? "history" : "feed"} />
+      <footer className="card-footer"><div className="metrics" aria-label={`${post.likes} reactions, ${post.comments} comments, and ${post.reposts} reposts`}><span><Icon name="heart" />{numberFormatter.format(post.likes)}</span><span><Icon name="comment" />{numberFormatter.format(post.comments)}</span>{post.reposts > 0 && <span><Icon name="repost" />{numberFormatter.format(post.reposts)}</span>}</div><a {...postClickHandlers(post.id, archived ? "history" : "feed")} className="open-link" href={post.linkedinUrl} target="_blank" rel="noreferrer">Open on {platformName} <Icon name="arrow" /></a></footer>
     </div>
   </article>;
 }
@@ -233,8 +235,30 @@ function AuthScreen() {
   return <main className="auth-page"><section className="auth-story"><Brand /><div className="auth-thesis"><span className="auth-kicker">LinkedIn + X, in one place</span><h1>Build a social feed with only the people you care about.</h1><p>Add people from LinkedIn and X. See their posts in one place, without ads or algorithmic noise.</p></div><FocusPreview /></section><section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span>{mode === "signup" ? "Create your account" : "Sign in to Finite Feed"}</span><p>{mode === "signup" ? "Sign up first, then choose the people you want to follow." : "We’ll email you a secure sign-in link."}</p></div><div className="auth-tabs" role="tablist"><button role="tab" aria-selected={mode === "signup"} className={mode === "signup" ? "active" : ""} onClick={() => setMode("signup")} type="button">Create account</button><button role="tab" aria-selected={mode === "login"} className={mode === "login" ? "active" : ""} onClick={() => setMode("login")} type="button">Sign in</button></div><form onSubmit={(event) => void submitEmail(event)}>{isGoogleAuthEnabled && <><button className="social-button" disabled={busy} type="button" onClick={() => void continueWithGoogle()}><GoogleMark />Continue with Google</button><div className="auth-divider"><span>or</span></div></>}<label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" placeholder="you@example.com" /></label><button className="auth-submit" disabled={busy} type="submit">{busy ? "Sending…" : mode === "signup" ? "Create account" : "Send sign-in link"}</button><p className="passwordless-note">No password to remember.</p>{error && <p className="inline-error" role="alert">{error}</p>}{message && <p className="inline-success" role="status">{message}</p>}</form></div></section></main>;
 }
 
+function ownProfileUrls(linkedinUrl: string, xUrl: string): string[] {
+  const urls: string[] = [];
+  for (const [value, platform, label] of [[linkedinUrl, "linkedin", "LinkedIn"], [xUrl, "x", "X"]]) {
+    if (!value.trim()) continue;
+    const profile = canonicalSocialProfileUrl(value);
+    if (profile?.platform !== platform) throw new Error(`Enter a valid ${label} profile URL in the ${label} field.`);
+    urls.push(profile.url);
+  }
+  if (!urls.length) throw new Error("Add your LinkedIn profile, X profile, or both.");
+  return urls;
+}
+
+function OwnProfileFields({ prefix, linkedinUrl, xUrl, setLinkedinUrl, setXUrl, disabled = false }: {
+  prefix: string; linkedinUrl: string; xUrl: string; setLinkedinUrl: (value: string) => void; setXUrl: (value: string) => void; disabled?: boolean;
+}) {
+  return <fieldset className="own-profile-fields" disabled={disabled}><legend>Your profiles</legend>
+    <label htmlFor={`${prefix}-linkedin`}>LinkedIn profile<input id={`${prefix}-linkedin`} type="text" inputMode="url" autoComplete="url" spellCheck={false} value={linkedinUrl} onChange={(event) => setLinkedinUrl(event.target.value)} placeholder="linkedin.com/in/your-name" /></label>
+    <label htmlFor={`${prefix}-x`}>X (Twitter) profile<input id={`${prefix}-x`} type="text" inputMode="url" autoComplete="url" spellCheck={false} value={xUrl} onChange={(event) => setXUrl(event.target.value)} placeholder="x.com/your-handle" /></label>
+  </fieldset>;
+}
+
 function Onboarding({ email }: { email: string }) {
-  const [profileUrl, setProfileUrl] = useState("");
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [xUrl, setXUrl] = useState("");
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [manualOpen, setManualOpen] = useState(false);
@@ -248,6 +272,11 @@ function Onboarding({ email }: { email: string }) {
 
   const receiveDiscovery = useCallback((next: DiscoveryStatus) => {
     setDiscovery(next);
+    if (next.profileUrls?.length || next.profileUrl) {
+      const urls = next.profileUrls?.length ? next.profileUrls : [next.profileUrl!];
+      setLinkedinUrl(urls.find((url) => canonicalSocialProfileUrl(url)?.platform === "linkedin") ?? "");
+      setXUrl(urls.find((url) => canonicalSocialProfileUrl(url)?.platform === "x") ?? "");
+    }
     if (next.id && next.status === "succeeded" && selectionRun.current !== next.id) {
       selectionRun.current = next.id;
       setSelected(new Set(next.candidates.slice(0, 12).map((candidate) => candidate.linkedinUrl)));
@@ -298,7 +327,7 @@ function Onboarding({ email }: { email: string }) {
     setDiscoveryError(null);
     setScanBusy(true);
     try {
-      receiveDiscovery(await startDiscovery(profileUrl));
+      receiveDiscovery(await startDiscovery(ownProfileUrls(linkedinUrl, xUrl)));
     } catch (error) {
       setDiscoveryError(error instanceof Error ? error.message : "We could not scan that profile.");
     } finally {
@@ -347,22 +376,21 @@ function Onboarding({ email }: { email: string }) {
       <li><span>4</span><span>Read</span></li>
     </ol>
     <section className={`onboarding-layout ${hasResults ? "with-results" : ""}`}>
-      <div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>{hasResults ? "Your circle, surfaced." : "Start with yourself."}</h1><p>{hasResults ? "We found the people you return to through comments, reposts, and reactions. Keep the ones whose updates you want to see." : "Give us your LinkedIn profile. We’ll look at your public activity and find the people you engage with most."}</p><div className="privacy-note"><Icon name="check" /><span>No LinkedIn login or cookies required.</span></div></div>
+      <div className="onboarding-intro"><span className="step-label">Build your reading list</span><h1>{hasResults ? "Your circle, surfaced." : "Start with yourself."}</h1><p>{hasResults ? "We found people through your public activity. Keep the ones whose updates you want to see." : "Add your LinkedIn profile, X (Twitter) profile, or both. We’ll look at your public activity and find the people you engage with most."}</p><div className="privacy-note"><Icon name="check" /><span>No LinkedIn or X login or cookies required.</span></div></div>
       <div className="onboarding-card discovery-card">
         {!scanning && !hasResults && <>
-          <div className="onboarding-card-heading"><strong>Find your people</strong><span>One URL</span></div>
+          <div className="onboarding-card-heading"><strong>Find your people</strong><span>One or both profiles</span></div>
           <form className="discovery-form" onSubmit={(event) => void scanProfile(event)}>
-            <label htmlFor="own-linkedin">Your LinkedIn profile URL</label>
-            <input id="own-linkedin" type="url" value={profileUrl} onChange={(event) => setProfileUrl(event.target.value)} placeholder="linkedin.com/in/your-name" autoComplete="url" spellCheck={false} required />
-            <p>We scan up to 20 posts, 30 comments, and 30 reactions to create your shortlist.</p>
+            <OwnProfileFields prefix="onboarding" linkedinUrl={linkedinUrl} xUrl={xUrl} setLinkedinUrl={setLinkedinUrl} setXUrl={setXUrl} />
+            <p>We use your recent public activity to create a shortlist of people worth following.</p>
             <button className="primary-button" type="submit" disabled={scanBusy}>{scanBusy ? "Starting scan…" : <>Find my people <Icon name="arrow" /></>}</button>
           </form>
           {(discovery?.status === "failed" || (discovery?.status === "succeeded" && discovery.candidates.length === 0)) && <div className="discovery-empty" role="status"><strong>{discovery.status === "failed" ? "The scan didn’t finish." : "Not enough public activity found."}</strong><span>{discovery.error ?? "You can try another profile or add people manually."}</span></div>}
         </>}
-        {scanning && <section className="discovery-progress" role="status" aria-live="polite"><span className="building-pulse" aria-hidden="true" /><span className="step-label">Reading public activity</span><h2>Finding the people behind your feed…</h2><p>Checking recent posts, comments, and reactions. This usually takes under a minute.</p><div className="discovery-skeleton" aria-hidden="true">{[0, 1, 2].map((item) => <span key={item} />)}</div></section>}
+        {scanning && <section className="discovery-progress" role="status" aria-live="polite"><span className="building-pulse" aria-hidden="true" /><span className="step-label">Reading public activity</span><h2>Finding the people behind your feed…</h2><p>Checking your recent public activity. This may take a minute.</p><div className="discovery-skeleton" aria-hidden="true">{[0, 1, 2].map((item) => <span key={item} />)}</div></section>}
         {hasResults && <>
           <div className="recommendation-heading"><div><strong>Recommended for you</strong><span>{selected.size} selected</span></div><button type="button" onClick={() => setSelected(new Set(discovery.candidates.map((candidate) => candidate.linkedinUrl)))}>Select all</button></div>
-          <ol className="recommendation-list">{discovery.candidates.map((candidate) => <li key={candidate.linkedinUrl}><label><input type="checkbox" checked={selected.has(candidate.linkedinUrl)} onChange={() => toggleCandidate(candidate.linkedinUrl)} /><span className="candidate-avatar">{candidate.avatarUrl ? <img src={candidate.avatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(candidate.name ?? "LinkedIn member")}</span>}</span><span className="candidate-copy"><strong>{candidate.name ?? candidate.linkedinUrl.split("/").at(-1)}</strong>{candidate.headline && <span>{candidate.headline}</span>}<small>{candidate.reason}</small></span></label></li>)}</ol>
+          <ol className="recommendation-list">{discovery.candidates.map((candidate) => <li key={candidate.linkedinUrl}><label><input type="checkbox" checked={selected.has(candidate.linkedinUrl)} onChange={() => toggleCandidate(candidate.linkedinUrl)} /><span className="candidate-avatar">{candidate.avatarUrl ? <img src={candidate.avatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(candidate.name ?? "Member")}</span>}</span><span className="candidate-copy"><strong>{candidate.name ?? candidate.linkedinUrl.split("/").at(-1)}</strong>{candidate.headline && <span>{candidate.headline}</span>}<small>{candidate.reason}</small></span></label></li>)}</ol>
           <div className="recommendation-footer"><span>Choose at least 3</span><button className="primary-button" type="button" disabled={feedBusy || selected.size < 3} onClick={() => void buildFeed([...selected]).catch(() => undefined)}>{feedBusy ? "Building…" : <>Build my feed with {selected.size} <Icon name="arrow" /></>}</button></div>
         </>}
         {discoveryError && <p className="inline-error" role="alert">{discoveryError}</p>}
@@ -373,7 +401,8 @@ function Onboarding({ email }: { email: string }) {
 }
 
 function PeopleDiscovery({ profiles, onChanged }: { profiles: Profile[]; onChanged: (message: string) => Promise<void> }) {
-  const [profileUrl, setProfileUrl] = useState("");
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [xUrl, setXUrl] = useState("");
   const [discovery, setDiscovery] = useState<DiscoveryStatus | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
@@ -386,7 +415,11 @@ function PeopleDiscovery({ profiles, onChanged }: { profiles: Profile[]; onChang
   );
   const receive = useCallback((next: DiscoveryStatus) => {
     setDiscovery(next);
-    if (next.profileUrl) setProfileUrl(next.profileUrl);
+    if (next.profileUrls?.length || next.profileUrl) {
+      const urls = next.profileUrls?.length ? next.profileUrls : [next.profileUrl!];
+      setLinkedinUrl(urls.find((url) => canonicalSocialProfileUrl(url)?.platform === "linkedin") ?? "");
+      setXUrl(urls.find((url) => canonicalSocialProfileUrl(url)?.platform === "x") ?? "");
+    }
     if (next.id && next.status === "succeeded" && selectionRun.current !== next.id) {
       selectionRun.current = next.id;
       const existing = new Set(profiles.map((profile) => profile.linkedinUrl));
@@ -405,7 +438,7 @@ function PeopleDiscovery({ profiles, onChanged }: { profiles: Profile[]; onChang
     event.preventDefault();
     setBusy(true);
     setError(null);
-    try { receive(await startDiscovery(profileUrl)); }
+    try { receive(await startDiscovery(ownProfileUrls(linkedinUrl, xUrl))); }
     catch (scanError) { setError(scanError instanceof Error ? scanError.message : "We could not scan that profile."); }
     finally { setBusy(false); }
   }
@@ -425,11 +458,11 @@ function PeopleDiscovery({ profiles, onChanged }: { profiles: Profile[]; onChang
 
   const scanning = discovery?.status === "starting" || discovery?.status === "running";
   return <section className="people-discovery">
-    <div className="people-discovery-copy"><span className="eyebrow">Smart suggestions</span><h2>Find people you already value.</h2><p>Add your own LinkedIn profile and Finite Feed will surface people you regularly comment on, repost, or react to. It checks again every two weeks.</p></div>
-    <form className="people-discovery-form" onSubmit={(event) => void scan(event)}><label htmlFor="people-own-linkedin">Your LinkedIn profile</label><div><input id="people-own-linkedin" type="url" value={profileUrl} onChange={(event) => setProfileUrl(event.target.value)} placeholder="linkedin.com/in/your-name" required /><button className="primary-button" disabled={busy || scanning} type="submit"><Icon name="refresh" />{busy && !scanning ? "Starting…" : discovery?.id ? "Scan again" : "Find my people"}</button></div></form>
+    <div className="people-discovery-copy"><span className="eyebrow">Smart suggestions</span><h2>Find people you already value.</h2><p>Add your LinkedIn and X (Twitter) profiles and Finite Feed will suggest people from your public activity. It checks again every two weeks.</p></div>
+    <form className="people-discovery-form" onSubmit={(event) => void scan(event)}><OwnProfileFields prefix="people" linkedinUrl={linkedinUrl} xUrl={xUrl} setLinkedinUrl={setLinkedinUrl} setXUrl={setXUrl} disabled={busy || scanning} /><p>Add either profile, or both for suggestions from both networks.</p><button className="primary-button" disabled={busy || scanning} type="submit"><Icon name="refresh" />{busy && !scanning ? "Starting…" : discovery?.id ? "Scan again" : "Find my people"}</button></form>
     {(scanning || (busy && candidates.length === 0)) && <div className="people-discovery-status" role="status"><span className="building-pulse" aria-hidden="true" /><span>Reading your recent public activity…</span></div>}
     {!scanning && discovery?.status === "succeeded" && candidates.length === 0 && <p className="people-discovery-status">You’re up to date—there are no new suggestions from this scan.</p>}
-    {!scanning && candidates.length > 0 && <><div className="people-suggestions-heading"><strong>Worth adding</strong><span>{selected.size} selected</span></div><ol className="people-suggestions">{candidates.map((candidate) => <li key={candidate.linkedinUrl}><label><input type="checkbox" checked={selected.has(candidate.linkedinUrl)} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(candidate.linkedinUrl)) next.delete(candidate.linkedinUrl); else next.add(candidate.linkedinUrl); return next; })} /><span className="candidate-avatar">{candidate.avatarUrl ? <img src={candidate.avatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(candidate.name ?? "LinkedIn member")}</span>}</span><span className="candidate-copy"><strong>{candidate.name ?? candidate.linkedinUrl.split("/").at(-1)}</strong><small>{candidate.reason}</small></span></label></li>)}</ol><button className="primary-button people-add-suggestions" type="button" disabled={busy || selected.size === 0} onClick={() => void addSelected()}>{busy ? "Adding…" : `Add ${selected.size} to my feed`} <Icon name="arrow" /></button></>}
+    {!scanning && candidates.length > 0 && <><div className="people-suggestions-heading"><strong>Worth adding</strong><span>{selected.size} selected</span></div><ol className="people-suggestions">{candidates.map((candidate) => <li key={candidate.linkedinUrl}><label><input type="checkbox" checked={selected.has(candidate.linkedinUrl)} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(candidate.linkedinUrl)) next.delete(candidate.linkedinUrl); else next.add(candidate.linkedinUrl); return next; })} /><span className="candidate-avatar">{candidate.avatarUrl ? <img src={candidate.avatarUrl} alt="" loading="lazy" decoding="async" /> : <span aria-hidden="true">{initials(candidate.name ?? "Member")}</span>}</span><span className="candidate-copy"><strong>{candidate.name ?? candidate.linkedinUrl.split("/").at(-1)}</strong><small>{candidate.reason}</small></span></label></li>)}</ol><button className="primary-button people-add-suggestions" type="button" disabled={busy || selected.size === 0} onClick={() => void addSelected()}>{busy ? "Adding…" : `Add ${selected.size} to my feed`} <Icon name="arrow" /></button></>}
     {error && <p className="inline-error" role="alert">{error}</p>}
   </section>;
 }
@@ -496,7 +529,7 @@ function FeedApp() {
       {refreshFailed && (view !== "today" || sortedFeed.length > 0) && <div className="refresh-failure" role="alert"><div><strong>Refresh failed.</strong><span>{data?.refresh.error ?? "The latest check did not finish."}</span></div><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry</button></div>}
       {view === "today" && <section className="feed" aria-label="Unread social posts">{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact={sortedFeed.length > 0} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{unreadFeed.length === 0 ? "Reading complete" : sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="balanced">Balanced by person</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<FeedEnd remainingIds={unreadFeed.map((post) => post.id)} onSeen={handleSeenMany} /></> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state mindful-empty"><span className="empty-kicker">All caught up</span><h2>You’re up to date.</h2><DailyQuote /><button className="text-button" type="button" onClick={() => setView("history")}>View recent history</button></section>}</section>}
       {view === "people" && <section className="people-view">{data && <PeopleDiscovery profiles={data.profiles} onChanged={async (nextMessage) => { setMessage(nextMessage); await reload(); }} />}<UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); const status = await startRefresh(); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added${status === "fresh" ? "." : " — checking for posts now."}`); await reload(); }} />{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact />}{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : isRefreshing ? "Checking now" : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}
-      {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person, post, or URL" /></div><p className="history-intro">Full posts stay readable here for 48 hours. After that, Finite Feed keeps only the reference link.</p>{recentHistory.length > 0 && <section className="history-feed" aria-label="Posts read in the last 48 hours"><div className="history-section-label"><strong>Last 48 hours</strong><span>{recentHistory.length} {recentHistory.length === 1 ? "post" : "posts"}</span></div>{recentHistory.map((item) => <FeedCard key={item.id} post={item} archived />)}</section>}{olderHistory.length > 0 && <section className="older-history"><div className="history-section-label"><strong>Older links</strong><span>Reference only</span></div><ol className="history-list">{olderHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on ${item.platform === "x" ? "X" : "LinkedIn"}`}><Icon name="arrow" /></a></li>)}</ol></section>}{filteredHistory.length === 0 && (historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person, phrase, or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Posts will stay here after you read them.</h2></section>)}</section>}
+      {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person, post, or URL" /></div><p className="history-intro">Full posts stay readable here for 48 hours. After that, Finite Feed keeps only the reference link.</p>{recentHistory.length > 0 && <section className="history-feed" aria-label="Posts read in the last 48 hours"><div className="history-section-label"><strong>Last 48 hours</strong><span>{recentHistory.length} {recentHistory.length === 1 ? "post" : "posts"}</span></div>{recentHistory.map((item) => <FeedCard key={item.id} post={item} archived />)}</section>}{olderHistory.length > 0 && <section className="older-history"><div className="history-section-label"><strong>Older links</strong><span>Reference only</span></div><ol className="history-list">{olderHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a {...postClickHandlers(item.id, "history")} href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on ${item.platform === "x" ? "X" : "LinkedIn"}`}><Icon name="arrow" /></a></li>)}</ol></section>}{filteredHistory.length === 0 && (historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person, phrase, or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Posts will stay here after you read them.</h2></section>)}</section>}
     </main>
     <footer className="site-footer"><span>Signal over noise.</span><span>Finite Feed</span></footer>
   </div>;

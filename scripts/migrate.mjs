@@ -7,10 +7,15 @@ if (!databaseUrl) throw new Error("POSTGRES_URL_NON_POOLING is not configured.")
 const sql = postgres(databaseUrl, { max: 1, ssl: "require" });
 
 try {
-  await sql`create table if not exists public.finite_feed_migrations (
-    name text primary key,
-    applied_at timestamptz not null default now()
-  )`;
+  await sql.begin(async (transaction) => {
+    await transaction`create table if not exists public.finite_feed_migrations (
+      name text primary key,
+      applied_at timestamptz not null default now()
+    )`;
+    // Migration bookkeeping is private to the privileged database runner.
+    await transaction`alter table public.finite_feed_migrations enable row level security`;
+    await transaction`revoke all privileges on table public.finite_feed_migrations from public, anon, authenticated`;
+  });
   const [{ base_exists: baseExists }] = await sql`select to_regclass('public.profiles') is not null as base_exists`;
   if (baseExists) {
     await sql`insert into public.finite_feed_migrations (name) values ('0001_finite_feed.sql') on conflict do nothing`;
