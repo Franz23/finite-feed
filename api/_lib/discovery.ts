@@ -285,9 +285,11 @@ export async function failDiscoveryActor(actorRunId: string, message: string): P
   if (error) throw error;
   if (!actor) return false;
   if (actor.status === "failed" || actor.status === "succeeded") return true;
-  const { error: updateError } = await db.from("discovery_actor_runs")
-    .update({ status: "failed", finished_at: new Date().toISOString(), error: message }).eq("id", actor.id);
+  const { data: transitioned, error: updateError } = await db.from("discovery_actor_runs")
+    .update({ status: "failed", finished_at: new Date().toISOString(), error: message })
+    .eq("id", actor.id).in("status", ["starting", "running"]).select("id").maybeSingle();
   if (updateError) throw updateError;
+  if (!transitioned) return true;
   if (canonicalSocialProfileUrl(actor.profile_url)?.platform === "x") {
     const chain = actorChain("x");
     const attempt = Number(actor.attempt) || 1;

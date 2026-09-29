@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { randomUUID } from "node:crypto";
 import { startActorRun } from "./_lib/apify.js";
+import { actorChain, chunkActorTargets } from "./_lib/actors.js";
 import { apiError, methodNotAllowed } from "./_lib/http.js";
 import { refreshSince } from "./_lib/refresh-window.js";
 import { adminClient, requireUser } from "./_lib/supabase.js";
@@ -31,15 +32,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
       !profile.last_scraped_at || Date.parse(profile.last_scraped_at) < staleCutoff,
     );
     if (targets.length === 0) return response.status(200).json({ status: "fresh" });
-    const activeCutoff = new Date(Date.now() - 15 * 60_000).toISOString();
-    const { data: active } = await db
+    const activeCutoff = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+    const { data: active, error: activeError } = await db
       .from("refresh_runs")
-      .select("status, target_urls")
-      .eq("user_id", user.id)
+      .select("target_urls")
       .in("status", ["starting", "running"])
       .gte("started_at", activeCutoff)
       .order("started_at", { ascending: false })
-      .limit(10);
+      .limit(100);
+    if (activeError) throw activeError;
     if (active?.length) {
       const activeUrls = new Set(active.flatMap((run) => Array.isArray(run.target_urls) ? run.target_urls : []));
       targets = targets.filter((profile) => !activeUrls.has(profile.linkedin_url));
@@ -48,16 +49,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     const batchId = randomUUID();
     const byPlatform = new Map<"linkedin" | "x", typeof targets>();
     for (const profile of targets) byPlatform.set(profile.platform, [...(byPlatform.get(profile.platform) ?? []), profile]);
-    await Promise.all([...byPlatform.entries()].map(([platform, platformTargets]) =>
-      startActorRun(
-        request,
-        platformTargets.map((profile) => profile.linkedin_url),
-        user.id,
-        refreshSince(platformTargets),
-        platform,
-        batchId,
-      ),
-    ));
+    await Promise.all([...byPlatform.entries()].flatMap(([platform, platformTargets]) => {
+      const adapter = actorChain(platform)[0];
+      return chunkActorTargets(platformTargets, adapter).map((chunk) => startActorRun(
+        request, chunk.map((profile) => profile.linkedin_url), user.id,
+        refreshSince(chunk), platform, batchId, adapter,
+      ));
+    }));
     return response.status(202).json({ status: "running", profiles: targets.length });
   } catch (error) {
     return apiError(response, error);

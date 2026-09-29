@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { startActorRun } from "./_lib/apify.js";
+import { actorChain, chunkActorTargets } from "./_lib/actors.js";
 import { startDueDiscoveryRuns } from "./_lib/discovery.js";
 import { apiError, methodNotAllowed } from "./_lib/http.js";
 import { refreshSince } from "./_lib/refresh-window.js";
@@ -55,7 +56,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
     // Vercel may deliver the same cron event more than once. Avoid starting another
     // scrape for a profile that is already part of a recent active run.
-    const activeCutoff = new Date(Date.now() - 15 * 60_000).toISOString();
+    const activeCutoff = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
     const { data: active, error: activeError } = await db
       .from("refresh_runs")
       .select("target_urls")
@@ -74,16 +75,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     for (const profile of targets) {
       byPlatform.set(profile.platform, [...(byPlatform.get(profile.platform) ?? []), profile]);
     }
-    await Promise.all([...byPlatform.entries()].map(([platform, platformTargets]) =>
-      startActorRun(
-        request,
-        platformTargets.map((profile) => profile.linkedin_url),
-        null,
-        refreshSince(platformTargets),
-        platform,
-        batchId,
-      ),
-    ));
+    await Promise.all([...byPlatform.entries()].flatMap(([platform, platformTargets]) => {
+      const adapter = actorChain(platform)[0];
+      return chunkActorTargets(platformTargets, adapter).map((chunk) => startActorRun(
+        request, chunk.map((profile) => profile.linkedin_url), null,
+        refreshSince(chunk), platform, batchId, adapter,
+      ));
+    }));
 
     return response.status(202).json({ status: "running", profiles: targets.length, discoveryRunsStarted });
   } catch (error) {
