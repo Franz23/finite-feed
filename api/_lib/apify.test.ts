@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { decideRunOutcome } from "./apify.js";
+import { chunksOf, decideRunOutcome } from "./apify.js";
+
+it("keeps every post while bounding database batches", () => {
+  const items = Array.from({ length: 121 }, (_, index) => index);
+  const batches = chunksOf(items, 50);
+  expect(batches.map((batch) => batch.length)).toEqual([50, 50, 21]);
+  expect(batches.flat()).toEqual(items);
+});
 
 const base = { apifyStatus: "SUCCEEDED" as const, rawItems: 1, errorItems: 0, posts: 1, targetsWithPostInLast14Days: 1, attempt: 1, chainLength: 2 };
 describe("decideRunOutcome", () => {

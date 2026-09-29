@@ -15,6 +15,16 @@ function stringValue(record: Record<string, unknown> | undefined, key: string): 
 }
 
 export type RunDecision = { outcome: "succeeded" | "failed" | "fallback"; reason: string | null };
+export function chunksOf<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+function databaseError(stage: string, error: { message: string; code?: string }): Error {
+  return new Error(`${stage} failed (${error.code ?? "unknown"}): ${error.message}`);
+}
+
 export function decideRunOutcome(input: {
   apifyStatus: "SUCCEEDED" | "FAILED" | "TIMED-OUT" | "ABORTED";
   rawItems: number; errorItems: number; posts: number;
@@ -125,18 +135,23 @@ export async function ingestDataset(datasetId: string, adapter: ActorAdapter): P
     .map((item) => adapter.normalize(item, profiles)).filter((post) => post !== null);
   const uniqueByUrl = [...new Map(candidates.map((post) => [post.linkedinUrl, post])).values()];
   if (uniqueByUrl.length === 0) return { rawItems: payload.length, errorItems, posts: 0 };
-  const { data: existingPosts, error: existingError } = await db.from("posts").select("id, linkedin_url")
-    .in("linkedin_url", uniqueByUrl.map((post) => post.linkedinUrl));
-  if (existingError) throw existingError;
-  const existingIdByUrl = new Map((existingPosts ?? []).map((post) => [post.linkedin_url, post.id]));
+  const existingIdByUrl = new Map<string, string>();
+  for (const posts of chunksOf(uniqueByUrl, 50)) {
+    const { data, error } = await db.from("posts").select("id, linkedin_url")
+      .in("linkedin_url", posts.map((post) => post.linkedinUrl));
+    if (error) throw databaseError("Post lookup", error);
+    for (const post of data ?? []) existingIdByUrl.set(post.linkedin_url, post.id);
+  }
   const normalized = uniqueByUrl.map((post) => ({ ...post, id: existingIdByUrl.get(post.linkedinUrl) ?? post.id }));
   const now = new Date().toISOString();
-  const { error: postsError } = await db.from("posts").upsert(normalized.map((post) => ({
-    id: post.id, profile_id: post.profileId, linkedin_url: post.linkedinUrl, content: post.content,
-    post_kind: post.kind, published_at: post.publishedAt, likes: post.likes, comments: post.comments,
-    reposts: post.reposts, media: post.media, platform: post.platform, last_observed_at: now,
-  })), { onConflict: "id" });
-  if (postsError) throw postsError;
+  for (const posts of chunksOf(normalized, 50)) {
+    const { error } = await db.from("posts").upsert(posts.map((post) => ({
+      id: post.id, profile_id: post.profileId, linkedin_url: post.linkedinUrl, content: post.content,
+      post_kind: post.kind, published_at: post.publishedAt, likes: post.likes, comments: post.comments,
+      reposts: post.reposts, media: post.media, platform: post.platform, last_observed_at: now,
+    })), { onConflict: "id" });
+    if (error) throw databaseError("Post save", error);
+  }
   const profileUpdates = new Map<string, typeof normalized[number]>();
   for (const post of normalized) profileUpdates.set(post.profileId, post);
   await Promise.all([...profileUpdates.values()].map(async (post) => {
@@ -165,7 +180,18 @@ export async function finalizeActorRun(
   const chain = actorChain(platform);
   const attempt = Number(run.attempt) || 1;
   const targetUrls = Array.isArray(run.target_urls) ? run.target_urls.filter((url: unknown): url is string => typeof url === "string") : [];
-  const stats = apifyStatus === "SUCCEEDED" && datasetId ? await ingestDataset(datasetId, adapter) : { rawItems: 0, errorItems: 0, posts: 0 };
+  let stats: { rawItems: number; errorItems: number; posts: number };
+  try {
+    stats = apifyStatus === "SUCCEEDED" && datasetId ? await ingestDataset(datasetId, adapter) : { rawItems: 0, errorItems: 0, posts: 0 };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unknown dataset processing error";
+    console.error(JSON.stringify({ event: "refresh_ingest_failed", actor_run_id: actorRunId, reason }));
+    const { error: failError } = await db.from("refresh_runs").update({
+      status: "failed", finished_at: new Date().toISOString(), error: `Could not process scraped posts: ${reason}`,
+    }).eq("id", run.id).eq("status", "running");
+    if (failError) throw failError;
+    return 0;
+  }
   const { data: profileRows, error: profileError } = await db.from("profiles").select("id").in("linkedin_url", targetUrls);
   if (profileError) throw profileError;
   const ids = (profileRows ?? []).map((row) => row.id);

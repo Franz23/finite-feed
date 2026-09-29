@@ -120,9 +120,7 @@ function RefreshProgress({ refresh, compact = false }: { refresh: RefreshStatus;
     ? "Taking longer than expected"
     : refresh.status === "starting" || elapsedSeconds < 8
     ? "Starting the check"
-    : elapsedSeconds < 30
-      ? "Collecting recent posts"
-      : "Processing the results";
+    : "Checking for recent posts";
   const profileLabel = `${refresh.profileCount || "Your"} ${refresh.profileCount === 1 ? "person" : "people"}`;
   return <section className={`refresh-progress ${compact ? "compact" : ""}`} role="status" aria-live="polite">
     <div className="refresh-progress-copy"><div><span className="refresh-label">Refresh in progress</span><strong>{stage}</strong></div><span className="refresh-timing">{profileLabel} · {elapsedSeconds}s</span></div>
