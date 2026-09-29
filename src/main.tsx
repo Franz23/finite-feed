@@ -4,13 +4,13 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "r
 import { createRoot } from "react-dom/client";
 import type { Session } from "@supabase/supabase-js";
 import { addFollows, getBootstrap, getDiscovery, markSeen, removeFollow, startDiscovery, startRefresh } from "./api";
+import { appendNewPosts, sortFeed, type SortMode } from "./feed-order";
 import { parseSocialUrls } from "./social";
 import { isSupabaseConfigured, supabase } from "./supabase";
 import type { Bootstrap, DiscoveryStatus, FeedPost, Profile, RefreshStatus } from "./types";
 import "./styles.css";
 
 type View = "today" | "people" | "history";
-type SortMode = "recent" | "balanced" | "engaged";
 const isGoogleAuthEnabled = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === "true";
 
 const numberFormatter = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
@@ -37,20 +37,6 @@ function formatRelativeDate(value: string): string {
 
 function initials(name: string): string {
   return name.split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
-}
-
-function balanceByAuthor(posts: FeedPost[]): FeedPost[] {
-  const remaining = [...posts].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
-  const balanced: FeedPost[] = [];
-  while (remaining.length > 0) {
-    const lastTwo = balanced.slice(-2);
-    const repeatedAuthor = lastTwo.length === 2 && lastTwo.every((post) => post.profileId === remaining[0]?.profileId);
-    const alternateIndex = repeatedAuthor
-      ? remaining.slice(0, 8).findIndex((post) => post.profileId !== remaining[0]?.profileId)
-      : -1;
-    balanced.push(remaining.splice(alternateIndex > 0 ? alternateIndex : 0, 1)[0]);
-  }
-  return balanced;
 }
 
 function Icon({ name }: { name: "heart" | "comment" | "repost" | "arrow" | "refresh" | "check" | "plus" | "close" }) {
@@ -469,6 +455,8 @@ function FeedApp() {
   const [data, setData] = useState<Bootstrap | null>(null);
   const [view, setView] = useState<View>("today");
   const [sort, setSort] = useState<SortMode>("recent");
+  const sortRef = useRef<SortMode>("recent");
+  const [displayedFeed, setDisplayedFeed] = useState<FeedPost[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -476,7 +464,12 @@ function FeedApp() {
   const [historyQuery, setHistoryQuery] = useState("");
   const [sessionSeen, setSessionSeen] = useState<Set<string>>(() => new Set());
   const autoRefreshAttempted = useRef(false);
-  const reload = useCallback(async (signal?: AbortSignal) => { const next = await getBootstrap(signal); setData(next); setLoading(false); }, []);
+  const reload = useCallback(async (signal?: AbortSignal) => {
+    const next = await getBootstrap(signal);
+    setData(next);
+    setDisplayedFeed((current) => appendNewPosts(current, next.feed, sortRef.current));
+    setLoading(false);
+  }, []);
   useEffect(() => { const controller = new AbortController(); void reload(controller.signal).catch((error: unknown) => { if (error instanceof DOMException && error.name === "AbortError") return; setActionError(error instanceof Error ? error.message : "Could not load the feed."); setLoading(false); }); return () => controller.abort(); }, [reload]);
   useEffect(() => {
     if (data?.refresh.status !== "running" && data?.refresh.status !== "starting") return;
@@ -490,13 +483,12 @@ function FeedApp() {
       if (status === "running" || status === "starting") return reload();
     }).catch((error: unknown) => setActionError(error instanceof Error ? error.message : "Could not check for new posts."));
   }, [data, reload]);
-  const sortedFeed = useMemo(() => {
-    const posts = [...(data?.feed ?? [])];
-    if (sort === "recent") return posts.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
-    if (sort === "balanced") return balanceByAuthor(posts);
-    const score = (post: FeedPost) => post.likes + post.comments * 4 + post.reposts * 2;
-    return posts.sort((a, b) => score(b) - score(a) || Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
-  }, [data?.feed, sort]);
+  const sortedFeed = displayedFeed ?? [];
+  function changeSort(next: SortMode) {
+    sortRef.current = next;
+    setSort(next);
+    setDisplayedFeed((current) => current === null ? null : sortFeed(current, next));
+  }
   const filteredHistory = useMemo(() => {
     const query = historyQuery.trim().toLowerCase();
     if (!query) return data?.history ?? [];
@@ -508,7 +500,8 @@ function FeedApp() {
   const olderHistory = filteredHistory.filter((item) => item.display === "link");
   const handleSeenMany = useCallback((ids: string[]) => { if (ids.length === 0) return; setSessionSeen((current) => { const next = new Set(current); ids.forEach((id) => next.add(id)); return next; }); void markSeen(ids).catch((error: unknown) => { setSessionSeen((current) => { const next = new Set(current); ids.forEach((id) => next.delete(id)); return next; }); setActionError(error instanceof Error ? error.message : "Could not remember those posts."); }); }, []);
   const handleSeen = useCallback((id: string) => handleSeenMany([id]), [handleSeenMany]);
-  const unreadFeed = sortedFeed.filter((post) => !sessionSeen.has(post.id));
+  const serverUnreadIds = new Set((data?.feed ?? []).map((post) => post.id));
+  const unreadFeed = sortedFeed.filter((post) => serverUnreadIds.has(post.id) && !sessionSeen.has(post.id));
   async function refresh() { setBusy(true); setActionError(null); try { await startRefresh(true); setMessage("Refresh started. New posts will appear here shortly."); await reload(); } catch (error) { setActionError(error instanceof Error ? error.message : "Refresh could not start."); } finally { setBusy(false); } }
   const today = new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
   const isRefreshing = data?.refresh.status === "running" || data?.refresh.status === "starting";
@@ -526,7 +519,7 @@ function FeedApp() {
       {(message || actionError) && <div className={`notice ${actionError ? "error" : "success"}`} role={actionError ? "alert" : "status"}><span>{actionError ?? message}</span><button aria-label="Dismiss message" onClick={() => { setMessage(null); setActionError(null); }}><Icon name="close" /></button></div>}
       {data?.refresh.error?.startsWith("fallback:") && !refreshFailed && <div className="refresh-warning" role="status">{data.refresh.status === "running" ? "A source failed; trying the next one." : "A source failed; the fallback completed."} {data.refresh.error.slice(9)}</div>}
       {refreshFailed && (view !== "today" || sortedFeed.length > 0) && <div className="refresh-failure" role="alert"><div><strong>Refresh failed.</strong><span>{data?.refresh.error ?? "The latest check did not finish."}</span></div><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry</button></div>}
-      {view === "today" && <section className="feed" aria-label="Unread social posts">{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact={sortedFeed.length > 0} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{unreadFeed.length === 0 ? "Reading complete" : sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="balanced">Balanced by person</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<FeedEnd remainingIds={unreadFeed.map((post) => post.id)} onSeen={handleSeenMany} /></> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state mindful-empty"><span className="empty-kicker">All caught up</span><h2>You’re up to date.</h2><DailyQuote /><button className="text-button" type="button" onClick={() => setView("history")}>View recent history</button></section>}</section>}
+      {view === "today" && <section className="feed" aria-label="Unread social posts">{isRefreshing && sortedFeed.length === 0 && data && <RefreshProgress refresh={data.refresh} />}{loading ? <Skeleton /> : sortedFeed.length > 0 ? <><div className="feed-toolbar"><span>{unreadFeed.length === 0 ? "Reading complete" : sessionSeen.size > 0 ? `${sessionSeen.size} read this session` : "Scroll past to mark read"}</span><label>Sort<select value={sort} onChange={(event) => changeSort(event.target.value as SortMode)}><option value="recent">Most recent</option><option value="balanced">Balanced by person</option><option value="engaged">Most engaged</option></select></label></div>{sortedFeed.map((post) => <FeedCard key={post.id} post={post} onSeen={handleSeen} />)}<FeedEnd remainingIds={unreadFeed.map((post) => post.id)} onSeen={handleSeenMany} />{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact />}</> : isRefreshing ? null : refreshFailed ? <section className="empty-state"><span className="empty-kicker">Refresh stopped</span><h2>Let’s try that again.</h2><p>{data?.refresh.error ?? "The last refresh did not finish."}</p><button className="primary-button" disabled={busy} onClick={() => void refresh()}><Icon name="refresh" />Retry refresh</button></section> : <section className="empty-state mindful-empty"><span className="empty-kicker">All caught up</span><h2>You’re up to date.</h2><DailyQuote /><button className="text-button" type="button" onClick={() => setView("history")}>View recent history</button></section>}</section>}
       {view === "people" && <section className="people-view">{data && <PeopleDiscovery profiles={data.profiles} onChanged={async (nextMessage) => { setMessage(nextMessage); await reload(); }} />}<UrlEntry onSubmit={async (urls) => { const result = await addFollows(urls); const status = await startRefresh(); setMessage(`${result.added} ${result.added === 1 ? "person" : "people"} added${status === "fresh" ? "." : " — checking for posts now."}`); await reload(); }} />{isRefreshing && data && <RefreshProgress refresh={data.refresh} compact />}{data?.profiles.length ? <ol className="people-list">{data.profiles.map((profile, index) => <li key={profile.id}><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><strong>{profile.name ?? profile.linkedinUrl.split("/").at(-1)}</strong><a href={profile.linkedinUrl} target="_blank" rel="noreferrer">{profile.linkedinUrl.replace("https://www.", "")}</a></div><span className="last-seen">{profile.lastScrapedAt ? `Checked ${formatRelativeDate(profile.lastScrapedAt)}` : isRefreshing ? "Checking now" : "Not checked yet"}</span><button className="remove-person" aria-label={`Stop following ${profile.name ?? "this person"}`} onClick={() => void removeFollow(profile.id).then(() => reload())}><Icon name="close" /></button></li>)}</ol> : null}<button className="signout-button" onClick={() => void supabase.auth.signOut()}>Sign out</button></section>}
       {view === "history" && <section className="history-view"><div className="history-search"><label htmlFor="history-query">Search read history</label><input id="history-query" type="search" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="Search by person, post, or URL" /></div><p className="history-intro">Full posts stay readable here for 48 hours. After that, Finite Feed keeps only the reference link.</p>{recentHistory.length > 0 && <section className="history-feed" aria-label="Posts read in the last 48 hours"><div className="history-section-label"><strong>Last 48 hours</strong><span>{recentHistory.length} {recentHistory.length === 1 ? "post" : "posts"}</span></div>{recentHistory.map((item) => <FeedCard key={item.id} post={item} archived />)}</section>}{olderHistory.length > 0 && <section className="older-history"><div className="history-section-label"><strong>Older links</strong><span>Reference only</span></div><ol className="history-list">{olderHistory.map((item) => <li key={item.id}><div><strong>{item.profileName}</strong><span>Published {formatRelativeDate(item.publishedAt)} · Read {formatRelativeDate(item.seenAt)}</span></div><a {...postClickHandlers(item.id, "history")} href={item.linkedinUrl} target="_blank" rel="noreferrer" aria-label={`Open ${item.profileName}'s post on ${item.platform === "x" ? "X" : "LinkedIn"}`}><Icon name="arrow" /></a></li>)}</ol></section>}{filteredHistory.length === 0 && (historyQuery ? <section className="empty-state compact"><span className="empty-kicker">No matches</span><h2>Try another person, phrase, or URL.</h2><button className="text-button" type="button" onClick={() => setHistoryQuery("")}>Clear search</button></section> : <section className="empty-state compact"><span className="empty-kicker">No history yet</span><h2>Posts will stay here after you read them.</h2></section>)}</section>}
     </main>
